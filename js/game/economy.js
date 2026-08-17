@@ -11,6 +11,7 @@ import {
   stockValue,
   addLog, addThreat, addRep, netWorth, upLevel, trinketMod, diff, logPrices,
   treasureMod, ownsWeapon, masteredCount,
+  cityUnlocked, nextStage,
   GOAL_WORTH, MAX_MONTHS, AP_PER_MONTH, MARTIAL_ENDING_AT,
 } from './state.js';
 import { clamp, rand, chance, pick, won } from '../core/util.js';
@@ -244,6 +245,93 @@ function applyEvent(ev) {
  * Answer a waiting choice. Returns the option's result line so the report
  * screen can show what actually happened.
  */
+/**
+ * 객주의 귀띔 — the single most useful sentence for the state the run is in.
+ *
+ * Eleven tabs open on a stranger who came for a sword game, and nothing on the
+ * screen says which one matters this month. Rather than a tutorial that plays
+ * once and is forgotten, this reads the actual numbers every turn and says one
+ * thing. Ordered by what costs the most to get wrong: debt first, then a
+ * deadline, then the trade that is actually on the table.
+ *
+ * Returns `{ text, tone }` or null when there is genuinely nothing to say.
+ */
+export function advice() {
+  const say = (text, tone = 'info') => ({ text, tone });
+
+  // -- things that lose money if ignored
+  if (S.debt > 0 && S.money < S.debt * 0.12) {
+    return say(`빚이 ${won(S.debt)}냥인데 수중이 얇다. 이자가 매달 붙는다`, 'warn');
+  }
+  const dueSoon = (S.contracts || []).filter((c) => c.due <= S.month + 1);
+  const notReady = dueSoon.filter((c) => !contractReady(c));
+  if (notReady.length) {
+    const c = notReady[0];
+    // The field is `good`, singular -- rollOffers writes it and contractReady
+    // reads it. `c.goods` is undefined, which named the item "undefined" and
+    // made every contract look untouched no matter how much was already held.
+    const g = good(c.good);
+    const short = Math.max(0, c.qty - (S.stock[c.good] || 0));
+    const where = c.city === S.city ? '' : ` · ${c.cityName}에서 넘겨야 한다`;
+    return say(short > 0
+      ? `${c.patronName} 계약 마감이 임박했다 — ${g.name} ${short}${g.unit}이 모자라다`
+      : `${c.patronName} 계약분은 다 모았다${where}`, 'warn');
+  }
+
+  // Everything below is a run to another town, and a run costs an action.
+  // With none left the advice would be to do something impossible this month.
+  if (S.ap === 0) return say('행동을 다 썼다. 달을 마쳐라', 'info');
+
+  // -- the trade that is actually available right now
+  const here = S.city;
+  let best = null;
+  for (const g of GOODS) {
+    const have = S.stock[g.id] || 0;
+    for (const c of CITIES) {
+      if (c.id === here || !cityUnlocked(c)) continue;
+      if (have > 0) {
+        // Already carrying it: where does it pay most?
+        const gain = (sellPrice(c.id, g.id) - sellPrice(here, g.id)) * have;
+        if (gain > 0 && (!best || gain > best.gain)) {
+          best = { gain, good: g, to: c, carrying: true };
+        }
+      } else {
+        // Empty: what is worth buying here for a run? maxBuyable already
+        // weighs the purse against the cart -- clamping it again by spaceLeft()
+        // mixes units, because that is volume and this is a count. The two
+        // only agree for goods of bulk 1, which is three of the ten.
+        const qty = maxBuyable(g.id);
+        if (qty < 1) continue;
+        const gain = (sellPrice(c.id, g.id) - buyPrice(here, g.id)) * qty;
+        if (gain > 0 && (!best || gain > best.gain)) {
+          best = { gain, good: g, to: c, qty, carrying: false };
+        }
+      }
+    }
+  }
+
+  if (best && best.carrying) {
+    const risk = Math.round(ambushChance(best.to.id) * 100);
+    return say(`실은 ${best.good.name}은 ${best.to.name}에서 가장 비싸다 `
+      + `— ${won(best.gain)}냥 더 받는다 · 습격 ${risk}%`, 'good');
+  }
+  if (best && best.gain > travelCost(best.to.id)) {
+    const net = best.gain - travelCost(best.to.id);
+    return say(`${best.good.name}이 여기서 싸다. ${best.qty}${best.good.unit} 사서 `
+      + `${best.to.name}에 풀면 길값 빼고 ${won(net)}냥 남는다`, 'good');
+  }
+
+  // -- nothing to trade: point at the other half of the game
+  const st = nextStage();
+  if (st && S.ap >= 2) {
+    return say(`장사로 남길 것이 마땅찮다. ${st.name} 출정이 열려 있다 — 행동 2`, 'info');
+  }
+  if (stored() === 0 && S.money > 0) {
+    return say('시세가 어디나 고만고만하다. 사 두고 다음 달을 기다리는 것도 방법이다', 'info');
+  }
+  return null;
+}
+
 export function chooseOption(index) {
   const ev = S.pendingChoice;
   if (!ev) return null;

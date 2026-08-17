@@ -323,5 +323,14 @@ export function ownsWeapon(wp) {
   return wp.cost === 0 || (S.ownedWeapons || []).includes(wp.id);
 }
 
-export const hasSave = () => !!localStorage.getItem(SAVE_KEY);
-export function clearSave() { localStorage.removeItem(SAVE_KEY); }
+// Reading localStorage is not always allowed -- a locked-down browser or a
+// private window can throw on access rather than return null. saveGame and
+// loadGame already swallow that; these two did not, and the title screen calls
+// hasSave() before anything is drawn, so the whole game died at the first
+// frame instead of simply offering no "continue".
+export const hasSave = () => {
+  try { return !!localStorage.getItem(SAVE_KEY); } catch { return false; }
+};
+export function clearSave() {
+  try { localStorage.removeItem(SAVE_KEY); } catch { /* nothing to clear */ }
+}

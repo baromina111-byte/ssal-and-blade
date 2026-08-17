@@ -108,18 +108,48 @@ html, body {
   #touch { bottom: calc(14vh + env(safe-area-inset-bottom, 0px)); }
 }
 
-/* Nudge phone players toward landscape, where the canvas fills the screen. */
+/* Nudge phone players toward landscape, where the canvas fills the screen.
+   Holding 16:9 on a 390-wide phone leaves the canvas 390x219 with some 600px
+   of dead frame around it, and the old hint for that was one 12px line at the
+   top. A stranger arriving from a shared link saw a postage stamp and left.
+   The notice now fills the empty space above the canvas -- it cannot be
+   missed, and it costs the canvas nothing because that space was already
+   black. */
 #rotate {
   position: absolute;
-  inset: auto 0 auto 0;
-  top: 12px;
+  left: 0;
+  right: 0;
+  bottom: calc(50% + min(50vw * 9 / 16, 50vh) + 28px);
   text-align: center;
-  font-size: 12px;
-  letter-spacing: .05em;
-  color: #8a7b60;
+  padding: 0 28px;
+  font-size: 15px;
+  line-height: 1.7;
+  letter-spacing: .02em;
+  color: #c8b493;
   pointer-events: none;
   display: none;
 }
+#rotate b {
+  display: block;
+  font-size: 19px;
+  font-weight: 800;
+  color: #f0dfb4;
+  margin-bottom: 6px;
+}
+#rotate i {
+  display: block;
+  width: 46px;
+  height: 30px;
+  margin: 0 auto 16px;
+  border: 2.5px solid #c8892f;
+  border-radius: 5px;
+  animation: turn 2.4s ease-in-out infinite;
+}
+@keyframes turn {
+  0%, 42%   { transform: rotate(0deg)   scaleX(.62); }
+  58%, 100% { transform: rotate(-90deg) scaleX(.62); }
+}
+@media (prefers-reduced-motion: reduce) { #rotate i { animation: none; } }
 @media (orientation: portrait) and (pointer: coarse) {
   #rotate { display: block; }
 }

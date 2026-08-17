@@ -22,6 +22,7 @@ import {
   buy, sell, maxBuyable, travel, travelCost, ambushChance, buyUpgrade,
   upgradeCost, borrow, repay, acceptContract, deliverContract, contractReady,
   hireCrew, dismissCrew, crewWages, buyPerk, branchDepth, availableTitles, maxCrew,
+  advice,
 } from '../game/economy.js';
 
 /**
@@ -239,6 +240,19 @@ export class Hub {
     roundRect(ctx, 24, H - 40, 560 * goal, 8, 4); ctx.fill();
     text(ctx, `목표 ${won(GOAL_WORTH)}냥 — ${Math.round(goal * 100)}%`, 24, H - 46,
       { size: 11, color: '#a39373' });
+
+    // 객주의 귀띔. Eleven tabs and nothing saying which one matters this month;
+    // this reads the state and says one thing. Sits above the goal bar because
+    // that is where the eye goes before pressing 이 달을 마친다.
+    const tip = advice();
+    if (tip) {
+      const col = { warn: '#e0806a', good: '#8fd0a0', info: '#a9b8c4' }[tip.tone];
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.arc(29, H - 68, 3, 0, Math.PI * 2);
+      ctx.fill();
+      text(ctx, tip.text, 40, H - 64, { size: 12, color: col, max: 560 });
+    }
 
     // Warn before the month closes on an order that cannot be filled.
     const dueNow = (S.contracts || []).filter((c) => c.due <= S.month);
