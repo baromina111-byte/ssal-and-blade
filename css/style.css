@@ -1,0 +1,125 @@
+:root {
+  --ink: #17140f;
+  --hanji: #e8dcc0;
+  --ochre: #c8892f;
+  --vermilion: #b5352b;
+  --indigo: #2b3a5c;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: #0d0b09;
+  overflow: hidden;
+  font-family: 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', system-ui, sans-serif;
+  color: var(--hanji);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+#frame {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(120% 90% at 50% 0%, #241d15 0%, #0d0b09 70%);
+}
+
+#game {
+  display: block;
+  width: min(100vw, calc(100vh * 16 / 9));
+  height: min(100vh, calc(100vw * 9 / 16));
+  image-rendering: auto;
+  touch-action: none;
+  background: #0d0b09;
+}
+
+/* ---------- loading veil ---------- */
+#loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  background: #0d0b09;
+  transition: opacity .5s ease;
+}
+#loading.gone { opacity: 0; pointer-events: none; }
+
+#loading .seal {
+  width: 74px; height: 74px;
+  display: grid; place-items: center;
+  background: var(--vermilion);
+  color: #fff6e2;
+  font-size: 40px; font-weight: 800;
+  border-radius: 6px;
+  box-shadow: 0 6px 30px rgba(181, 53, 43, .45);
+  margin-bottom: 6px;
+}
+#loading h1 { font-size: 34px; letter-spacing: .22em; font-weight: 800; }
+#loading .sub { color: #8a7b60; letter-spacing: .3em; font-size: 12px; }
+#loading .bar {
+  width: 260px; height: 4px; margin-top: 16px;
+  background: #2a2319; border-radius: 4px; overflow: hidden;
+}
+#loading .bar i {
+  display: block; height: 100%; width: 0;
+  background: linear-gradient(90deg, var(--ochre), #e8c37a);
+  transition: width .2s ease;
+}
+#loading .pct { color: #6b5f4a; font-size: 11px; letter-spacing: .1em; }
+
+/* ---------- touch controls (coarse pointers only) ---------- */
+#touch {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 0 8px;
+  pointer-events: none;
+}
+#touch[hidden] { display: none; }
+#touch .pad, #touch .acts { display: flex; gap: 6px; pointer-events: auto; }
+/* Attack sits nearest the thumb, so the row is laid out from the right. */
+#touch .acts { flex-direction: row-reverse; }
+#touch button {
+  width: 50px; height: 50px;
+  border-radius: 50%;
+  border: 2px solid rgba(232, 220, 192, .35);
+  background: rgba(23, 20, 15, .6);
+  color: var(--hanji);
+  font: 600 12px/1 inherit;
+  backdrop-filter: blur(4px);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+#touch button:active { background: rgba(200, 137, 47, .5); }
+#touch .b1 { width: 62px; height: 62px; border-color: rgba(200, 137, 47, .65); }
+
+/* In portrait the canvas is letterboxed; keep the pad just under it. */
+@media (orientation: portrait) {
+  #touch { bottom: calc(14vh + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* Nudge phone players toward landscape, where the canvas fills the screen. */
+#rotate {
+  position: absolute;
+  inset: auto 0 auto 0;
+  top: 12px;
+  text-align: center;
+  font-size: 12px;
+  letter-spacing: .05em;
+  color: #8a7b60;
+  pointer-events: none;
+  display: none;
+}
+@media (orientation: portrait) and (pointer: coarse) {
+  #rotate { display: block; }
+}
