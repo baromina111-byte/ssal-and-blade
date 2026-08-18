@@ -5,24 +5,34 @@ import { sfx, playMusic } from '../core/audio.js';
 import { pointer, pressed } from '../core/input.js';
 import { button, tabs, meter, logList } from '../core/ui.js';
 import {
-  text, panel, roundRect, won, clamp, drawSprite, wrapText,
+  text, panel, roundRect, won, clamp, drawSprite, wrapText, chance,
 } from '../core/util.js';
 import {
   CITIES, GOODS, UPGRADES, WEAPONS, ARMORS, STAGES, ENEMIES,
   SKILLS, CONSUMABLES, TRINKETS, ENDINGS, ENDING_ORDER,
+  CONTRACT_PATRONS,
 } from '../data/gamedata.js';
 import { TREASURES, RARITY, MAX_WORN } from '../data/treasures.js';
+import { ALL_EVENTS } from '../data/events.js';
 import { DEEDS, TITLES, CREW, PERKS, PERK_BRANCHES, MASTERY } from '../data/features.js';
+import {
+  STATS, grade, LOYALTY, RANKS, DEVELOP, STRATAGEMS, RESOURCES, HOLDERS,
+  SEARCH, TRAIN, SCOUT, TRIBUTE, PATROL, PROVISION, DUEL,
+} from '../data/rtk.js';
 import {
   S, city, good, capacity, stored, buyPrice, sellPrice, priceOf, netWorth,
   monthLabel, upLevel, cityUnlocked, weapon, armor, playerMaxHp, stockValue,
   addLog, GOAL_WORTH, MAX_MONTHS, equippedSkills, masteryProgress, ownsWeapon,
+  rank, perks, officer, bestStat, devLevel, relation, relationTier, res, heldBy,
+  addRep,
 } from '../game/state.js';
 import {
   buy, sell, maxBuyable, travel, travelCost, ambushChance, buyUpgrade,
   upgradeCost, borrow, repay, acceptContract, deliverContract, contractReady,
   hireCrew, dismissCrew, crewWages, buyPerk, branchDepth, availableTitles, maxCrew,
   advice,
+  shareSpoils, swearOath, searchTalent, trainOfficer, develop, developCost,
+  patrol, sendTribute, scout, buyStratagem, loadProvisions, recruitOdds,
 } from '../game/economy.js';
 
 /**
@@ -87,10 +97,10 @@ function weaponSigil(ctx, wp, cx, cy, alpha = 1) {
 
 const W = 960, H = 540;
 const TABS = ['저잣거리', '계약', '상단', '무구', '무예', '보패', '사람',
-  '팔도', '출정', '공적', '장부'];
+  '경략', '팔도', '출정', '공적', '장부'];
 const TAB_BG = ['market', 'shop_interior', 'warehouse', 'fortress_yard',
-  'fortress_gate', 'palace', 'village_day', null, null, 'fortress_yard',
-  'shop_interior'];
+  'fortress_gate', 'palace', 'village_day', 'palace', null, null,
+  'fortress_yard', 'shop_interior'];
 
 export class Hub {
   /** @param {{onBattle:Function, onEndMonth:Function}} hooks */
@@ -133,6 +143,16 @@ export class Hub {
   draw(ctx) {
     this.drawBackdrop(ctx);
     this.drawHeader(ctx);
+    // 23. Twelve tabs with no keyboard path meant every screen change was a
+    // mouse hunt. Q/E step through them and 1-9,0,-,= jump straight to one.
+    if (pressed('KeyQ')) { this.tab = (this.tab + TABS.length - 1) % TABS.length; sfx.select(); }
+    if (pressed('KeyE')) { this.tab = (this.tab + 1) % TABS.length; sfx.select(); }
+    const JUMP = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6',
+      'Digit7', 'Digit8', 'Digit9', 'Digit0', 'Minus', 'Equal'];
+    JUMP.forEach((code, i) => {
+      if (i < TABS.length && pressed(code)) { this.tab = i; sfx.select(); }
+    });
+
     this.tab = tabs(ctx, 24, 74, W - 48, TABS, this.tab);
     const pending = (S.contracts || []).filter((c) => c.due <= S.month + 1).length;
     if (pending) {
@@ -153,10 +173,11 @@ export class Hub {
       case 4: this.drawDojo(ctx); break;
       case 5: this.drawTreasures(ctx); break;
       case 6: this.drawPeople(ctx); break;
-      case 7: this.drawMap(ctx); break;
-      case 8: this.drawSortie(ctx); break;
-      case 9: this.drawDeeds(ctx); break;
-      case 10: this.drawLedger(ctx); break;
+      case 7: this.drawStatecraft(ctx); break;
+      case 8: this.drawMap(ctx); break;
+      case 9: this.drawSortie(ctx); break;
+      case 10: this.drawDeeds(ctx); break;
+      case 11: this.drawLedger(ctx); break;
     }
     this.drawFooter(ctx);
 
@@ -536,6 +557,15 @@ export class Hub {
    */
   drawGear(ctx) {
     const top = 118;
+    // 22. Twenty-six arms could only be compared by clicking each one in turn.
+    // The table view lays them side by side and sorts, which is the only way a
+    // choice between sixteen melee options is actually a choice.
+    if (button(ctx, { x: 380, y: top + 6, w: 104, h: 22 },
+      this.compare ? '격자로' : '비교표', { small: true, tone: 'ghost' })) {
+      this.compare = !this.compare;
+    }
+    if (this.compare) { this.drawWeaponTable(ctx, top); return; }
+
     panel(ctx, 24, top, 470, 336);
     text(ctx, '무기', 44, top + 24, { size: 16, weight: 800, color: '#f0dfb4' });
     text(ctx, '무예도보통지의 스물여섯 자루', 150, top + 24,
@@ -933,6 +963,302 @@ export class Hub {
     }
   }
 
+
+  // --------------------------------------------------------- 경략
+
+  /**
+   * The strategy layer in one screen, in four columns: who serves you, what you
+   * are building, who owes you a favour, and what you are taking into the next
+   * fight. Everything here costs an action, coin or materiel.
+   */
+  drawStatecraft(ctx) {
+    const top = 118;
+    const r = rank();
+
+    // ---- column 1: officers
+    panel(ctx, 24, top, 300, 336);
+    text(ctx, '사람', 44, top + 24, { size: 15, weight: 800, color: '#f0dfb4' });
+    text(ctx, `${r.name} · ${r.perk}`, 92, top + 24, { size: 10, color: '#c8892f' });
+
+    const crew = (S.crew || []);
+    this.oIdx = clamp(this.oIdx || 0, 0, Math.max(0, crew.length - 1));
+    if (!crew.length) {
+      text(ctx, '아직 거느린 사람이 없다.', 44, top + 54,
+        { size: 11, color: '#7d7159' });
+    }
+    crew.slice(0, 5).forEach((id, i) => {
+      const c = CREW.find((x) => x.id === id);
+      const o = officer(id);
+      const y = top + 40 + i * 44;
+      const sel = this.oIdx === i;
+      panel(ctx, 40, y, 268, 38, {
+        fill: sel ? 'rgba(74,45,18,.9)' : 'rgba(24,20,14,.8)',
+        stroke: sel ? 'rgba(232,196,120,.7)' : 'rgba(120,104,78,.3)',
+      });
+      text(ctx, c.name, 56, y + 16, { size: 12, weight: 700, color: '#f0dfb4' });
+      if (o.sworn) text(ctx, '義', 56 + c.name.length * 12 + 6, y + 16,
+        { size: 11, weight: 800, color: '#e0b455' });
+      if (o.wounded) text(ctx, `요양 ${o.wounded}달`, 150, y + 16,
+        { size: 10, color: '#e0806a' });
+      // loyalty bar
+      const lk = o.loyalty / LOYALTY.max;
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      roundRect(ctx, 56, y + 24, 150, 5, 2.5); ctx.fill();
+      ctx.fillStyle = o.loyalty < LOYALTY.grumble ? '#e0806a'
+        : o.loyalty > 80 ? '#7fc98f' : '#c8892f';
+      roundRect(ctx, 56, y + 24, 150 * lk, 5, 2.5); ctx.fill();
+      text(ctx, `충성 ${Math.round(o.loyalty)}`, 300, y + 16,
+        { size: 10, color: '#8d8069', align: 'right' });
+      if (pointer.clicked && pointer.x >= 40 && pointer.x <= 308
+        && pointer.y >= y && pointer.y <= y + 38) { this.oIdx = i; sfx.click(); }
+    });
+
+    // selected officer: stats and the two things you can do to them
+    const selId = crew[this.oIdx];
+    if (selId) {
+      const o = officer(selId);
+      const y = top + 254;
+      panel(ctx, 40, y, 268, 76, { fill: 'rgba(18,15,10,.9)' });
+      text(ctx, CREW.find((x) => x.id === selId)?.name || '', 56, y + 15,
+        { size: 11, weight: 700, color: '#d8c69c' });
+      if (S.sworn === selId) {
+        text(ctx, '의형제', 300, y + 15,
+          { size: 10, color: '#e0b455', align: 'right' });
+      } else if (!S.sworn && button(ctx, { x: 202, y: y + 4, w: 100, h: 16 },
+        '의형제 2,400', { small: true, enabled: S.money >= 2400 })) {
+        if (swearOath(selId)) this.say('의형제를 맺었다');
+        else this.say('돈이 모자란다', true);
+      }
+      // Five stats across 268px: 52px each with a train button under it.
+      STATS.forEach((st, i) => {
+        const v = o.stats[st.id];
+        const gr = grade(v);
+        const x = 50 + i * 52;
+        text(ctx, st.name, x + 20, y + 32,
+          { size: 10, color: '#8d8069', align: 'center' });
+        text(ctx, String(v), x + 20, y + 48,
+          { size: 13, weight: 800, color: gr.c, align: 'center' });
+        if (button(ctx, { x, y: y + 54, w: 40, h: 18 }, '훈련',
+          { small: true, enabled: S.money >= TRAIN.cost && S.ap >= 1
+            && v < TRAIN.cap && !o.wounded })) {
+          if (trainOfficer(selId, st.id)) this.say(`${st.name} +${TRAIN.gain}`);
+        }
+      });
+    }
+
+    // ---- column 2: development + actions
+    panel(ctx, 332, top, 296, 336);
+    text(ctx, `${city().name} 내정`, 352, top + 24,
+      { size: 15, weight: 800, color: '#f0dfb4' });
+    const holder = HOLDERS[heldBy(S.city)];
+    text(ctx, holder.name, 452, top + 24, { size: 11, weight: 700, color: holder.color });
+
+    DEVELOP.forEach((d, i) => {
+      const y = top + 40 + i * 46;
+      const lv = devLevel(S.city, d.id);
+      panel(ctx, 348, y, 264, 40, { fill: 'rgba(24,20,14,.8)' });
+      text(ctx, d.name, 364, y + 16, { size: 12, weight: 700, color: '#f0dfb4' });
+      for (let k = 0; k < d.max; k++) {
+        ctx.fillStyle = k < lv ? '#e0b455' : 'rgba(120,104,78,.35)';
+        ctx.fillRect(364 + k * 11, y + 24, 8, 4);
+      }
+      text(ctx, d.effect, 424, y + 16, { size: 9, color: '#7d7159', max: 110 });
+      if (lv >= d.max) {
+        text(ctx, '완성', 600, y + 26, { size: 10, color: '#7fc98f', align: 'right' });
+      } else if (button(ctx, { x: 530, y: y + 10, w: 76, h: 20 },
+        `${won(developCost(d))}`, { small: true, enabled: S.money >= developCost(d) })) {
+        if (develop(d)) this.say(`${d.name} ${lv + 1}단계`);
+        else this.say('자원이나 돈이 모자란다', true);
+      }
+    });
+
+    // patrol + talent search
+    const ay = top + 234;
+    if (button(ctx, { x: 348, y: ay, w: 128, h: 30 }, '순찰',
+      { sub: `행동 1 · 치안 -${PATROL.cut}`, enabled: perks().patrol && S.ap >= 1 })) {
+      const out = patrol();
+      this.say(out.ok ? `치안 -${out.cut}` : out.why, !out.ok);
+    }
+    if (button(ctx, { x: 484, y: ay, w: 128, h: 30 }, '인재 탐색',
+      { sub: `행동 1 · ${won(Math.round(SEARCH.cost * perks().search))}냥`,
+        enabled: S.ap >= 1 })) {
+      const out = searchTalent();
+      this.say(out.ok ? (out.found ? `${out.found.name} 발견` : '허탕') : out.why, !out.ok);
+    }
+
+    // strategic resources
+    text(ctx, '전략 자원', 352, ay + 54, { size: 12, weight: 700, color: '#d8c69c' });
+    RESOURCES.forEach((rr, i) => {
+      const x = 348 + i * 88;
+      text(ctx, rr.name, x, ay + 74, { size: 11, color: '#8d8069' });
+      text(ctx, String(res(rr.id)), x + 34, ay + 74,
+        { size: 13, weight: 800, color: '#e0b455' });
+    });
+
+    // ---- column 3: patrons
+    panel(ctx, 636, top, 300, 160);
+    text(ctx, '외교', 656, top + 24, { size: 15, weight: 800, color: '#f0dfb4' });
+    CONTRACT_PATRONS.forEach((p, i) => {
+      const y = top + 36 + i * 24;
+      const v = relation(p.id);
+      const t = relationTier(p.id);
+      text(ctx, p.name, 656, y + 14, { size: 11, color: '#d8c69c' });
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      roundRect(ctx, 740, y + 6, 90, 5, 2.5); ctx.fill();
+      ctx.fillStyle = t.mul === 0 ? '#e0806a' : t.mul > 1.2 ? '#7fc98f' : '#c8892f';
+      roundRect(ctx, 740, y + 6, 90 * (v / 100), 5, 2.5); ctx.fill();
+      text(ctx, t.name, 838, y + 14, { size: 10, color: '#8d8069' });
+      if (button(ctx, { x: 872, y: y, w: 52, h: 18 }, '헌납',
+        { small: true, enabled: S.money >= TRIBUTE.cost })) {
+        if (sendTribute(p.id)) this.say(`${p.name} 우호 +${TRIBUTE.gain}`);
+      }
+    });
+
+    // ---- column 4: what goes into the next sortie
+    panel(ctx, 636, top + 168, 300, 168);
+    text(ctx, '군략', 656, top + 192, { size: 15, weight: 800, color: '#f0dfb4' });
+    const laid = S.stratagems || [];
+    const slots = perks().slots;
+    text(ctx, laid.length
+      ? `${laid.map((id) => STRATAGEMS.find((x) => x.id === id)?.name).join(' + ')}`
+      : '계략 없음',
+    712, top + 192, {
+      size: 10, color: laid.length ? '#7fc98f' : '#7d7159',
+    });
+    text(ctx, `${laid.length}/${slots}`, 916, top + 192,
+      { size: 10, color: '#8d8069', align: 'right' });
+
+    this.stIdx = this.stIdx || 0;
+    const st = STRATAGEMS[this.stIdx];
+    panel(ctx, 652, top + 204, 268, 58, { fill: 'rgba(18,15,10,.9)' });
+    text(ctx, st.name, 668, top + 222, { size: 13, weight: 700, color: '#f0dfb4' });
+    text(ctx, `지력 ${st.int}`, 906, top + 222,
+      { size: 10, color: '#8d8069', align: 'right' });
+    text(ctx, st.desc, 668, top + 240, { size: 10, color: '#a89878', max: 244 });
+    text(ctx, `우리 지력 ${bestStat('int')}`, 668, top + 256,
+      { size: 9, color: bestStat('int') >= st.int ? '#7fc98f' : '#e0806a' });
+
+    if (button(ctx, { x: 652, y: top + 268, w: 40, h: 24 }, '<',
+      { small: true, tone: 'ghost' })) {
+      this.stIdx = (this.stIdx + STRATAGEMS.length - 1) % STRATAGEMS.length;
+    }
+    if (button(ctx, { x: 696, y: top + 268, w: 40, h: 24 }, '>',
+      { small: true, tone: 'ghost' })) {
+      this.stIdx = (this.stIdx + 1) % STRATAGEMS.length;
+    }
+    const held = laid.includes(st.id);
+    const full = laid.length >= slots;
+    if (button(ctx, { x: 744, y: top + 268, w: 176, h: 24 },
+      held ? '준비됨' : full ? '자리 없음' : `${won(st.cost)}냥에 준비`,
+      { enabled: !held && !full && S.money >= st.cost })) {
+      if (buyStratagem(st)) this.say(`${st.name} 준비`);
+      else this.say('자원이나 돈이 모자란다', true);
+    }
+
+    // provisions + intel
+    if (button(ctx, { x: 652, y: top + 300, w: 130, h: 26 },
+      `군량 ${S.provisions}섬`,
+      { sub: `쌀 ${PROVISION.perSortie}섬 적재`,
+        enabled: (S.stock.rice || 0) >= PROVISION.perSortie })) {
+      if (loadProvisions()) this.say('군량을 실었다');
+    }
+    if (button(ctx, { x: 790, y: top + 300, w: 130, h: 26 },
+      S.intel ? '첩보 확보' : '첩보',
+      { sub: S.intel ? '다음 달을 안다' : `${won(SCOUT.cost)}냥`,
+        enabled: !S.intel && S.money >= SCOUT.cost })) {
+      if (scout()) this.say('첩보를 샀다');
+    }
+    // 14. The forecast itself. Buying it and never being shown it was money for
+    // nothing; the confidence figure is what makes a low-지력 house's intel a
+    // rumour rather than a fact.
+    if (S.intel) {
+      const card = ALL_EVENTS.find((e) => e.id === S.intel.id);
+      text(ctx, `다음 달 — ${card ? card.title : '?'}`, 656, top + 340, {
+        size: 11, weight: 700, color: '#9fe0ff',
+      });
+      text(ctx, `확신 ${Math.round(S.intel.sure * 100)}%`, 916, top + 340, {
+        size: 10, color: '#8d8069', align: 'right',
+      });
+    }
+  }
+
+  /** 22. Every arm on one sortable sheet. */
+  drawWeaponTable(ctx, top) {
+    panel(ctx, 24, top, 912, 336);
+    const COLS = [
+      { k: 'name', label: '무기', w: 92, get: (w) => w.name, align: 'left' },
+      { k: 'dmg', label: '위력', w: 58, get: (w) => w.dmg },
+      { k: 'reach', label: '사거리', w: 62, get: (w) => w.reach },
+      { k: 'speed', label: '속도', w: 58, get: (w) => w.speed.toFixed(2) },
+      { k: 'combo', label: '연타', w: 52, get: (w) => w.combo || 3 },
+      { k: 'pierce', label: '관통', w: 52, get: (w) => w.pierce || 1 },
+      { k: 'parry', label: '패링', w: 52, get: (w) => (w.parry || 1).toFixed(1) },
+      { k: 'dps', label: '초당', w: 58,
+        get: (w) => Math.round(w.dmg * w.speed * (w.pierce || 1) * 10) / 10 },
+      { k: 'cost', label: '값', w: 74, get: (w) => won(w.cost) },
+    ];
+    this.sortKey = this.sortKey || 'dmg';
+
+    let x = 44;
+    for (const c of COLS) {
+      const on = this.sortKey === c.k;
+      text(ctx, c.label, c.align === 'left' ? x : x + c.w - 8, top + 26, {
+        size: 11, weight: on ? 800 : 600,
+        color: on ? '#e0b455' : '#8d8069',
+        align: c.align === 'left' ? 'left' : 'right',
+      });
+      if (pointer.clicked && pointer.x >= x - 6 && pointer.x <= x + c.w
+        && pointer.y >= top + 12 && pointer.y <= top + 32) {
+        this.sortKey = c.k; sfx.select();
+      }
+      x += c.w;
+    }
+    text(ctx, '항목을 눌러 정렬', 700, top + 26, { size: 10, color: '#6d6455' });
+
+    const rows = [...WEAPONS].sort((a, b) => {
+      const c = COLS.find((q) => q.k === this.sortKey);
+      const va = c.get(a); const vb = c.get(b);
+      if (this.sortKey === 'name') return String(va).localeCompare(String(vb));
+      return parseFloat(String(vb).replace(/,/g, '')) - parseFloat(String(va).replace(/,/g, ''));
+    });
+
+    rows.forEach((w, i) => {
+      const y = top + 42 + i * 11.1;
+      const owned = ownsWeapon(w.id);
+      const eq = WEAPONS[S.weapon] === w;
+      if (eq) {
+        ctx.fillStyle = 'rgba(224,180,85,.14)';
+        ctx.fillRect(36, y - 8, 890, 11);
+      }
+      let cx = 44;
+      for (const c of COLS) {
+        const isName = c.align === 'left';
+        text(ctx, String(c.get(w)), isName ? cx : cx + c.w - 8, y, {
+          size: 9.6,
+          weight: eq ? 800 : 400,
+          color: eq ? '#f0dfb4' : owned ? '#c3b18c' : '#7d7159',
+          align: isName ? 'left' : 'right',
+        });
+        cx += c.w;
+      }
+      text(ctx, w.trait, 620, y, {
+        size: 9, color: eq ? '#e0b455' : '#6d6455', max: 300,
+      });
+      if (pointer.clicked && pointer.y >= y - 8 && pointer.y <= y + 3
+        && pointer.x >= 36 && pointer.x <= 926) {
+        const idx = WEAPONS.indexOf(w);
+        if (ownsWeapon(w.id)) { S.weapon = idx; this.say(`${w.name} 착용`); }
+        else if (S.money >= w.cost) {
+          S.money -= w.cost;
+          (S.ownedWeapons || (S.ownedWeapons = [])).push(w.id);
+          S.weapon = idx;
+          addLog(`${w.name} 구입 — ${won(w.cost)}냥`, 'info');
+          this.say(`${w.name} 구입`);
+        } else this.say('돈이 모자란다', true);
+      }
+    });
+  }
+
   // -------------------------------------------------------------- dojo
 
   /** Skills, trinkets and battle supplies — everything you take into a fight. */
@@ -1070,12 +1396,22 @@ export class Hub {
       ctx.globalAlpha = open ? 1 : 0.35;
       ctx.beginPath();
       ctx.arc(px, py, sel ? 12 : 9, 0, Math.PI * 2);
-      ctx.fillStyle = here ? '#e0b455' : threat > 55 ? '#c04a34' : '#8c7a56';
+      // 7. Ownership is worth 18% on every price in the town, so it belongs on
+      // the map rather than only in the 경략 tab's single-town readout.
+      const hold = HOLDERS[heldBy(c.id)];
+      ctx.fillStyle = here ? '#e0b455'
+        : heldBy(c.id) !== 'joseon' ? hold.color
+          : threat > 55 ? '#c04a34' : '#8c7a56';
       ctx.fill();
       ctx.lineWidth = 2;
       ctx.strokeStyle = sel ? '#fff0c4' : 'rgba(20,17,12,.9)';
       ctx.stroke();
       ctx.restore();
+      if (open && heldBy(c.id) !== 'joseon') {
+        text(ctx, hold.name, px, py + 26, {
+          size: 9, weight: 700, align: 'center', color: hold.color,
+        });
+      }
       text(ctx, open ? c.name : '?', px, py - 18, {
         size: 12, weight: 700, align: 'center',
         color: open ? '#f0dfb4' : '#6f6552', shadow: 'rgba(0,0,0,.9)',
@@ -1095,6 +1431,14 @@ export class Hub {
 
     const cost = travelCost(c.id);
     const risk = ambushChance(c.id);
+    const dh = HOLDERS[heldBy(c.id)];
+    text(ctx, `${dh.name}이 쥐고 있다`, 916, top + 34, {
+      size: 12, weight: 700, align: 'right', color: dh.color,
+    });
+    if (heldBy(c.id) !== 'joseon') {
+      text(ctx, '남의 땅 — 물가 +18%', 916, top + 52,
+        { size: 10, align: 'right', color: '#e0806a' });
+    }
     meter(ctx, 526, top + 108, 390, (S.threat[c.id] || 0) / 100, '치안 위협',
       (S.threat[c.id] || 0) > 55 ? '#c04a34' : '#c8892f', `${Math.round(S.threat[c.id] || 0)}`);
 
@@ -1228,9 +1572,62 @@ export class Hub {
         : ' · 무예 없음'),
       368, top + 324, { size: 11, color: '#a39373' });
 
-    if (button(ctx, { x: 700, y: top + 264, w: 216, h: 44 }, '출 정',
-      { enabled: S.ap >= 2, tone: 'danger', sub: S.ap >= 2 ? '행동 2' : '행동이 모자라다' })) {
-      S.ap -= 2;
+    // What the strategy layer is sending along, so the player can see whether
+    // the sortie is actually prepared before spending the actions on it.
+    const prep = [];
+    prep.push(S.stratagem
+      ? `계략 ${STRATAGEMS.find((x) => x.id === S.stratagem)?.name}`
+      : '계략 없음');
+    prep.push(S.provisions >= PROVISION.perSortie
+      ? `군량 ${S.provisions}섬` : '군량 없음 — 약해진다');
+    text(ctx, prep.join(' · '), 368, top + 341, {
+      size: 10,
+      color: S.provisions >= PROVISION.perSortie ? '#7fc98f' : '#e0806a',
+    });
+
+    // 17. 일기토. Only against a named commander, and only once each.
+    // 10. Once per stage, remembered by stage id. Resetting the flag on launch
+    // let a losing player back out, re-enter and re-roll the duel until it went
+    // their way, which made the wager free.
+    S.duelsTried = S.duelsTried || {};
+    if (st.boss && !S.duelWon && !S.duelsTried[st.id]) {
+      const mine = Math.round(bestStat('war') * 0.4 + S.rep * 0.5 + weapon().dmg * 1.1);
+      const theirs = 55 + st.ch * 4;
+      if (button(ctx, { x: 700, y: top + 218, w: 216, h: 38 }, '일기토를 청한다', {
+        tone: 'ghost',
+        sub: `우리 ${mine} 대 ${theirs}`,
+      })) {
+        S.duelsTried[st.id] = true;
+        if (chance(clamp((mine - theirs) / 70 + 0.5, 0.15, 0.9))) {
+          S.duelWon = true;
+          addRep(DUEL.repWin);
+          this.say(`일기토 승 — 적장이 상하고 시작한다 (평판 +${DUEL.repWin})`);
+        } else {
+          S.duelLost = true;
+          this.say('일기토 패 — 성치 않은 몸으로 싸운다', true);
+        }
+      }
+    } else if (st.boss && S.duelWon) {
+      text(ctx, '일기토 승 — 적장이 상해 있다', 808, top + 240,
+        { size: 11, weight: 700, color: '#7fc98f', align: 'center' });
+    } else if (st.boss && S.duelsTried[st.id]) {
+      text(ctx, '이미 겨뤘다 — 성치 않은 몸이다', 808, top + 240,
+        { size: 11, weight: 700, color: '#e0806a', align: 'center' });
+    }
+
+    // 15. Re-entry discount after a loss on this same stage.
+    const again = S.reentry === st.id;
+    const cost = again ? 1 : 2;
+    if (again) {
+      text(ctx, '길은 이미 알고 있다 — 행동 1로 다시 든다', 808, top + 258,
+        { size: 10, weight: 700, align: 'center', color: '#9fe0ff' });
+    }
+    if (button(ctx, { x: 700, y: top + 264, w: 216, h: 44 }, again ? '다시 출정' : '출 정',
+      { enabled: S.ap >= cost, tone: 'danger',
+        sub: S.ap >= cost ? `행동 ${cost}` : '행동이 모자라다' })) {
+      S.ap -= cost;
+      if (again) S.reentryUsed = st.id;      // the discount is spent
+      S.reentry = null;
       this.hooks.onBattle(st);
     }
   }
@@ -1240,6 +1637,23 @@ export class Hub {
   drawLedger(ctx) {
     const top = 118;
     panel(ctx, 24, top, 560, 336);
+
+    // 11. LOYALTY.grumble is documented as the point where "the ledger warns
+    // you". It did not, so people left without notice. They do not any more.
+    const unhappy = (S.crew || [])
+      .filter((id) => officer(id).loyalty < LOYALTY.grumble && !officer(id).sworn)
+      .map((id) => ({ name: CREW.find((c) => c.id === id)?.name || id,
+        l: officer(id).loyalty }))
+      .sort((a, b) => a.l - b.l);
+    if (unhappy.length) {
+      const near = unhappy.filter((u) => u.l < LOYALTY.walkout + 8);
+      text(ctx, near.length
+        ? `${unhappy.map((u) => u.name).join(', ')} — 떠나기 직전이다`
+        : `${unhappy.map((u) => u.name).join(', ')}의 불만이 쌓였다`,
+      44, top + 22, {
+        size: 11, weight: 700, color: near.length ? '#e0806a' : '#c8892f', max: 520,
+      });
+    }
     text(ctx, '장부', 44, top + 26, { size: 16, weight: 800, color: '#f0dfb4' });
     logList(ctx, 44, top + 40, 520, S.log, 14);
 

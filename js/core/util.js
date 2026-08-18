@@ -1,3 +1,48 @@
+// Shared drawing and maths helpers.
+//
+// ---- Accessibility
+//
+// Status in this game was carried almost entirely by red-versus-green: loyalty
+// bars, patron goodwill, price deltas, threat. That is the single most common
+// form of colour blindness, so `access` offers a palette that separates those
+// states by lightness and hue angle instead, plus a text-scale the screens read
+// when sizing labels. Both are persisted and both default to off, so nothing
+// changes for a player who does not need them.
+
+export const access = { colorSafe: false, textScale: 1 };
+
+const ACCESS_KEY = 'ssal-and-blade.access';
+
+export function loadAccess() {
+  try {
+    const raw = localStorage.getItem(ACCESS_KEY);
+    if (!raw) return;
+    Object.assign(access, JSON.parse(raw));
+  } catch { /* keep defaults */ }
+}
+
+export function saveAccess() {
+  try { localStorage.setItem(ACCESS_KEY, JSON.stringify(access)); } catch { /* full */ }
+}
+
+/**
+ * Map a status colour through the current palette.
+ *
+ * Callers keep passing the colours they always did; when the safe palette is on,
+ * the red/green pair becomes blue/orange, which stays distinguishable under
+ * deuteranopia and protanopia both.
+ */
+const SAFE = {
+  '#e0806a': '#5b9bd5',   // bad / falling  -> blue
+  '#c04a34': '#3d7ebf',   // danger
+  '#7fc98f': '#e8a33d',   // good / rising  -> amber
+  '#6fbf84': '#d99530',
+  '#8fe0a0': '#f0b755',
+  '#4a8f5a': '#b8791f',
+};
+
+export const status = (c) => (access.colorSafe && SAFE[c]) || c;
+
 // Small shared helpers: maths, deterministic-ish randomness, canvas drawing.
 
 export const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -65,14 +110,18 @@ export function text(ctx, str, x, y, opts = {}) {
     max = 0,
   } = opts;
   ctx.save();
-  ctx.font = `${weight} ${size}px 'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic',system-ui,sans-serif`;
+  // One place for both accessibility knobs: every label in the game goes
+  // through here, so scaling and recolouring status text needs no changes at
+  // the ~900 call sites.
+  const px = size * (access.textScale || 1);
+  ctx.font = `${weight} ${px}px 'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic',system-ui,sans-serif`;
   ctx.textAlign = align;
   ctx.textBaseline = baseline;
   if (shadow) {
     ctx.shadowColor = shadow;
     ctx.shadowBlur = 8;
   }
-  ctx.fillStyle = color;
+  ctx.fillStyle = status(color);
   if (max) ctx.fillText(str, x, y, max);
   else ctx.fillText(str, x, y);
   ctx.restore();

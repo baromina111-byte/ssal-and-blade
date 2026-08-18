@@ -66,6 +66,10 @@ export function initInput(cv) {
 
 export const held = (...cs) => cs.some((c) => codes.has(c));
 export const pressed = (...cs) => cs.some((c) => pressedThisFrame.has(c));
+
+/** Any one code pressed this frame, for the rebinding prompt. */
+export const lastPressedCode = () => (pressedThisFrame.size
+  ? [...pressedThisFrame][0] : null);
 export const released = (...cs) => cs.some((c) => releasedThisFrame.has(c));
 
 /** Any key at all — for "press anything to continue" prompts. */
@@ -97,7 +101,8 @@ export function endPointerFrame() {
  * steers with the arrow cluster. J/K/L and Space stay live as aliases so the
  * older layout keeps working.
  */
-export const KEYS = {
+/** The layout as shipped. Rebinding starts from a copy of this. */
+export const DEFAULT_KEYS = {
   left: ['ArrowLeft'],
   right: ['ArrowRight'],
   up: ['ArrowUp'],
@@ -111,10 +116,69 @@ export const KEYS = {
   pause: ['Escape', 'KeyP'],
 };
 
+const BIND_KEY = 'ssal-and-blade.keys';
+
+/**
+ * Live bindings.
+ *
+ * The layout was hardcoded, which is a problem for anyone who cannot reach
+ * WASD-and-arrows comfortably or is playing on a non-QWERTY board where KeyA is
+ * somewhere else entirely. `KEYS` stays the same shape so every call site is
+ * unchanged; only its contents are now editable and persisted.
+ */
+export const KEYS = structuredClone(DEFAULT_KEYS);
+
+export function loadBindings() {
+  try {
+    const raw = localStorage.getItem(BIND_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    for (const k of Object.keys(DEFAULT_KEYS)) {
+      if (Array.isArray(saved[k]) && saved[k].length) KEYS[k] = saved[k];
+    }
+    refreshLabels();
+  } catch { /* keep defaults */ }
+}
+
+export function rebind(action, code) {
+  if (!KEYS[action]) return false;
+  KEYS[action] = [code];
+  refreshLabels();
+  try { localStorage.setItem(BIND_KEY, JSON.stringify(KEYS)); } catch { /* full */ }
+  return true;
+}
+
+export function resetBindings() {
+  for (const k of Object.keys(DEFAULT_KEYS)) KEYS[k] = [...DEFAULT_KEYS[k]];
+  refreshLabels();
+  try { localStorage.removeItem(BIND_KEY); } catch { /* nothing */ }
+}
+
+/** Turn a KeyboardEvent.code into something printable on a button. */
+export function codeLabel(code) {
+  if (!code) return '—';
+  if (code.startsWith('Key')) return code.slice(3);
+  if (code.startsWith('Digit')) return code.slice(5);
+  if (code.startsWith('Arrow')) {
+    return { Left: '←', Right: '→', Up: '↑', Down: '↓' }[code.slice(5)] || code;
+  }
+  return { Space: '␣', Enter: '⏎', Escape: 'Esc', ShiftLeft: 'Shift',
+    ShiftRight: 'Shift', Minus: '-', Equal: '=' }[code] || code;
+}
+
 /** Human-readable label for a binding, for on-screen hints. */
 export const keyLabel = {
   move: '←→', jump: 'W', attack: 'A', guard: 'S', dash: 'D', pause: 'Esc',
 };
+
+function refreshLabels() {
+  keyLabel.move = `${codeLabel(KEYS.left[0])}${codeLabel(KEYS.right[0])}`;
+  keyLabel.jump = codeLabel(KEYS.jump[0]);
+  keyLabel.attack = codeLabel(KEYS.attack[0]);
+  keyLabel.guard = codeLabel(KEYS.guard[0]);
+  keyLabel.dash = codeLabel(KEYS.dash[0]);
+  keyLabel.pause = codeLabel(KEYS.pause[0]);
+}
 
 export const leftHeld = () => held(...KEYS.left);
 export const rightHeld = () => held(...KEYS.right);

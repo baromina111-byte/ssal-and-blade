@@ -5,7 +5,15 @@ import { sfx } from './audio.js';
 import { roundRect, text, clamp } from './util.js';
 
 /** Hit-test + draw a button. Returns true on the frame it is activated. */
+/**
+ * Set by tools/test-ui.mjs: when present, every button drawn records its
+ * rectangle here so the harness can click exactly the live targets instead of
+ * sweeping a grid over the whole screen. Costs one `if` in normal play.
+ */
+export const buttonProbe = { rects: null };
+
 export function button(ctx, r, label, opts = {}) {
+  if (buttonProbe.rects) buttonProbe.rects.push({ ...r, label });
   const {
     enabled = true, hot = false, sub = '', size = 16,
     tone = 'default',   // default | primary | danger | ghost

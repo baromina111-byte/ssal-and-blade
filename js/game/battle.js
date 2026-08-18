@@ -8,7 +8,7 @@ import { img } from '../core/loader.js';
 import { sfx, playMusic } from '../core/audio.js';
 import {
   clamp, rand, chance, lerp, approach, easeOut, text, panel,
-  drawSprite, groundShadow, roundRect, won,
+  drawSprite, groundShadow, roundRect, won, access, saveAccess,
 } from '../core/util.js';
 import { button } from '../core/ui.js';
 import { settings, toggleMusic, toggleSfx } from '../core/audio.js';
@@ -16,14 +16,16 @@ import {
   ENEMIES, ALLIES, CONSUMABLES, BOSS_MOVES, OBJECTIVES, ELITES, WEATHER, FOREGROUND,
 } from '../data/gamedata.js';
 import { MASTERY } from '../data/features.js';
+import { PROVISION, STRATAGEMS, DUEL } from '../data/rtk.js';
 import {
   S, weapon, armor, playerMaxHp, upLevel, equippedSkills, attackMul, trinketMod, diff,
-  masteryOf, treasureMod,
+  masteryOf, treasureMod, bestStat,
 } from './state.js';
 import {
   leftHeld, rightHeld, jumpPressed, attackPressed, guardHeld, guardPressed,
   dashPressed, pausePressed, pressed, keyLabel, pointer,
   attackHeld, attackReleased,
+  KEYS, rebind, resetBindings, codeLabel, lastPressedCode,
 } from '../core/input.js';
 
 const W = 960, H = 540;
@@ -45,6 +47,27 @@ function weaponMass(wp) {
 
 /** How long the timed-follow-up window stays open after a swing completes. */
 const CHAIN_WINDOW = 0.26;
+
+/** At most this many refraction rings at once. See Fx.shock for the numbers. */
+const MAX_SHOCKS = 3;
+
+/**
+ * Automatic quality. The refraction and chromatic passes each re-read the whole
+ * frame, which is affordable on a fast machine and is not on a slow one. Rather
+ * than shipping a menu nobody opens, the renderer watches its own frame time and
+ * drops the two expensive passes when it cannot afford them.
+ */
+export const quality = { heavy: true, avg: 6, samples: 0 };
+
+/** Called once per rendered frame with how long the last one took. */
+export function noteFrame(ms) {
+  quality.avg = quality.avg * 0.9 + ms * 0.1;
+  quality.samples += 1;
+  if (quality.samples < 30) return;
+  // Hysteresis, so a single slow frame does not flip the look back and forth.
+  if (quality.heavy && quality.avg > 13) quality.heavy = false;
+  else if (!quality.heavy && quality.avg < 8) quality.heavy = true;
+}
 
 /**
  * The dash. Two separate places start one -- out of a charge and out of a
@@ -174,6 +197,11 @@ class Fx {
    * just adding another white circle on top of it.
    */
   shock(x, y, r, opts = {}) {
+    // Measured cost: one refraction ring adds ~4.2ms to a 4.5ms frame, three
+    // put it at 12.8ms and ten at 22ms -- past the 16.7ms a 60fps frame has.
+    // Overlapping rings are visually almost indistinguishable, so the cap costs
+    // nothing to look at and keeps the worst case bounded.
+    if (this.shocks.length >= MAX_SHOCKS) this.shocks.shift();
     this.shocks.push({
       x, y, r0: r * 0.15, r1: r, t: opts.life || 0.34, life: opts.life || 0.34,
       power: opts.power || 14,
@@ -340,7 +368,12 @@ class Fx {
       if (push < 0.4) continue;
       const cx = sh.x - cam;
       const cy = sh.y;
-      const STEPS = 20;
+      // Each step is a clip plus a full-canvas blit, so the slice count is the
+      // knob: fewer slices when several rings are live, fewer again when the
+      // frame is already running long.
+      const STEPS = Math.max(6, Math.round(
+        20 / this.shocks.length * (quality.heavy ? 1 : 0.5),
+      ));
       ctx.save();
       ctx.globalAlpha = Math.min(1, (1 - k) * 1.6);
       for (let i = 0; i < STEPS; i++) {
@@ -1258,6 +1291,11 @@ class Player extends Actor {
   }
 
   /** Damage multiplier from gear, trinket and the 호통 buff. */
+  /** 18. An unfed march hits softer. */
+  hungerMul(scene) {
+    return scene && scene.hungry ? PROVISION.weakDmg : 1;
+  }
+
   power() {
     return attackMul() * (this.atkBuffT > 0 ? 1.25 : 1);
   }
@@ -1365,7 +1403,8 @@ class Player extends Actor {
     const mass = weaponMass(wp);
     const timed = this.timed;                     // hit inside the rhythm window
     const mult = (this.combo >= last ? 1.6 : 1 + this.combo * 0.12) * (timed ? 1.3 : 1);
-    const dmg = this.dmg * mult * this.power() * (1 + (m.dmg || 0));
+    const dmg = this.dmg * mult * this.power() * (1 + (m.dmg || 0))
+      * this.hungerMul(scene);
     const fx = wp.fx || {};
     const tint = fx.hue || '#fff4d8';
     const arcScale = (wp.arc || 1) * (1 + (m.arc || 0));
@@ -1466,6 +1505,8 @@ class Player extends Actor {
         scene.fx.float(hitX, this.y - 176, `${pierced}명 관통`, '#c9e8ff', 17);
       }
       if (timed) {
+        S.tally = S.tally || {};
+        S.tally.timedHits = (S.tally.timedHits || 0) + 1;
         scene.fx.float(this.x, this.y - 214, '정확한 연격', '#9fe0ff', 18);
         scene.fx.ring(hitX, this.y - 96, 130 * arcScale,
           { color: 'rgba(150,220,255,.9)', w: 4, life: 0.24 });
@@ -1875,9 +1916,17 @@ class Enemy extends Actor {
 class Ally extends Actor {
   constructor(id, x) {
     const cfg = ALLIES[id];
-    super({ x, hp: cfg.hp, w: 42, dir: 1 });
+    // 5 + 6. 통솔 is what your escort can take, 무력 is what it deals. Both stats
+    // were described that way in the officer table and neither was read by the
+    // battle -- a house full of 90-통솔 veterans fielded the same allies as one
+    // staffed entirely by porters.
+    const cmd = bestStat('cmd');
+    const war = bestStat('war');
+    const hp = Math.round(cfg.hp * (1 + (cmd - 55) * 0.006));
+    super({ x, hp: Math.max(40, hp), w: 42, dir: 1 });
     this.cfg = cfg; this.h = cfg.h; this.cool = rand(0.4, 1.4);
     this.rally = 0;
+    this.statDmg = 1 + (war - 55) * 0.005;
   }
 
   update(dt, scene) {
@@ -1916,7 +1965,8 @@ class Ally extends Actor {
         for (const e of scene.enemies) {
           if (e.dead) continue;
           if ((e.x - this.x) * this.dir > -20 && (e.x - this.x) * this.dir < Math.max(this.cfg.reach, SEPARATION + 16)) {
-            e.hurt(this.cfg.dmg * mul, this.dir, scene.fx, { knock: 150 });
+            e.hurt(this.cfg.dmg * mul * (this.statDmg || 1), this.dir,
+              scene.fx, { knock: 150 });
             if (e.dead) scene.onKill(e);
           }
         }
@@ -2157,6 +2207,108 @@ export class Battle {
     playMusic(stage.music || 'battle');
     this.spawnWave();
     if (this.objective.id === 'hunt') this.spawnMark();
+
+    // ---- 경략: what the hub prepared lands here.
+    // 18. Provisions. Marching unfed does not stop the sortie, it makes every
+    // swing softer and every wound deeper -- the oldest rule in the genre.
+    this.fed = stage.ambush ? true : !!stage.fed;
+    if (!this.fed) {
+      this.hungry = true;
+      this.player.maxHp = Math.round(this.player.maxHp * PROVISION.weakHp);
+      this.player.hp = this.player.maxHp;
+    }
+    // 16. Stratagems, already rolled by the hub.
+    if (stage.stratagem) {
+      const list = Array.isArray(stage.stratagem) ? stage.stratagem : [stage.stratagem];
+      this.applyStratagems(list);
+    }
+    // 17. And a duel already fought, on whichever side lost it.
+    //
+    // The commander is almost never in the opening wave -- on every stage in the
+    // game the boss arrives last. Applying the wound to `this.enemies` at
+    // construction therefore hit nobody, so a won duel cost the risk and paid
+    // nothing. The debuff is held on the scene and applied as each boss spawns.
+    this.duelWon = !!stage.duelWon;
+    if (this.duelWon) {
+      this.woundBosses();
+      this.fx.float(this.player.x, this.player.y - 280, '적장이 상해 있다', '#7fc98f', 18);
+    } else if (stage.duelLost) {
+      this.player.hp = Math.round(this.player.hp * (1 - DUEL.selfDamage));
+    }
+  }
+
+  /** Apply the won-duel wound to any boss on the field that has not taken it. */
+  woundBosses() {
+    if (!this.duelWon) return;
+    for (const e of this.enemies) {
+      if (e.cfg.boss && !e.duelHurt) {
+        e.duelHurt = true;
+        e.maxHp = Math.round(e.maxHp * (1 - DUEL.bossDamage));
+        e.hp = Math.min(e.hp, e.maxHp);
+      }
+    }
+  }
+
+  /**
+   * Apply several stratagems in a fixed order.
+   *
+   * Two of them can now be laid at once, and order matters: 성동격서 removes
+   * bodies, so it has to run before anything that scales with how many are
+   * standing, and the multiplicative debuffs have to run before 화계 reads
+   * health. Sorting by a declared rank keeps the result identical no matter what
+   * order the player bought them in.
+   */
+  applyStratagems(list) {
+    const ORDER = { feint: 0, levy: 1, rumor: 2, provision: 3, ambush: 4, fire: 5 };
+    for (const res of [...list].sort((a, b) => (ORDER[a?.id] ?? 9) - (ORDER[b?.id] ?? 9))) {
+      this.applyStratagem(res);
+    }
+  }
+
+  /**
+   * Turn a resolved stratagem into an opening condition. Each maps onto
+   * something the fight already understands -- stun, health, wind-up, count --
+   * so none of them can put the battle into a state it cannot handle.
+   */
+  applyStratagem(res) {
+    if (!res || !res.ok) {
+      if (res) {
+        this.fx.float(this.player.x, this.player.y - 260, res.fail || '실패',
+          '#e0806a', 18);
+      }
+      return;
+    }
+    const alive = this.enemies.filter((e) => !e.dead);
+    switch (res.id) {
+      case 'ambush':
+        alive.slice(0, Math.ceil(alive.length / 2)).forEach((e) => {
+          e.stun = 2.4; e.state = 'hurt';
+        });
+        break;
+      case 'fire':
+        alive.forEach((e) => {
+          e.hp = Math.max(1, Math.round(e.hp * 0.78));
+          this.fx.burst(e.x, e.y - 40, 12, { color: '#ff9a4a', spread: 220, up: 40 });
+        });
+        this.fx.pop(0.3);
+        break;
+      case 'rumor':
+        alive.forEach((e) => { e.cfg = { ...e.cfg, windup: e.cfg.windup * 1.25 }; });
+        break;
+      case 'feint':
+        alive.slice(0, Math.floor(alive.length / 3)).forEach((e) => {
+          e.dead = true; e.deadT = 2;
+        });
+        break;
+      case 'provision':
+        alive.forEach((e) => { e.cfg = { ...e.cfg, dmg: e.cfg.dmg * 0.82 }; });
+        break;
+      case 'levy':
+        this.allies.push(new Ally('ally_militia', this.player.x - 60));
+        this.allies.push(new Ally('ally_militia', this.player.x - 110));
+        break;
+    }
+    this.fx.float(this.player.x, this.player.y - 260, `${res.name} 적중`, '#9fe0ff', 20);
   }
 
   /**
@@ -2230,23 +2382,66 @@ export class Battle {
     this.pending = ids.slice(half);
     this.pendingT = 4.5;
 
-    this.place(front, 1);
+    // The opening group always comes from ahead -- whichever way that is given
+    // where the player is standing.
+    this.frontDir = this.pickFlank(front.length, 1);
+    this.place(front, this.frontDir);
     this.waveBanner = `제 ${this.wave + 1} 파 · ${ids.length}명`;
     this.waveBannerT = 1.6;
   }
 
-  /** Line a group up on one flank of the player. */
+  /**
+   * How much clear room a flank has, in pixels, before it runs into an arena
+   * wall. A group needs roughly 150px per body plus a 300px approach gap.
+   */
+  flankRoom(dir) {
+    const edge = dir > 0 ? ARENA - 120 : 120;
+    return Math.abs(edge - this.player.x);
+  }
+
+  /**
+   * Pick which flank a group arrives on.
+   *
+   * Every stage starts the player near the left wall, so the rear flank often
+   * has no room at all -- the old code clamped the spawn to the arena edge and
+   * the group materialised on top of the player, behind them, which read as
+   * enemies arriving from the wrong direction. A flank is only used when it
+   * can actually hold the group at a distance.
+   */
+  pickFlank(count, prefer) {
+    const need = 300 + count * 150;
+    if (this.flankRoom(prefer) >= need) return prefer;
+    if (this.flankRoom(-prefer) >= need) return -prefer;
+    // Neither side has room: take the roomier one and let the clamp handle it.
+    return this.flankRoom(1) >= this.flankRoom(-1) ? 1 : -1;
+  }
+
+  /**
+   * Line a group up on one flank of the player, walking away from them.
+   *
+   * Every spawn funnels through here, which makes it the one place a won duel's
+   * wound can be applied to a commander who arrives in a later wave.
+   */
   place(list, dir) {
+    // Start beyond the player's reach so nothing appears already on top of
+    // them, and keep the whole group inside the arena.
+    const span = list.length * 150;
     const start = dir > 0
-      ? Math.min(this.player.x + 500, ARENA - 200)
-      : Math.max(160, this.player.x - 560);
+      ? Math.min(this.player.x + 420, ARENA - 140 - span)
+      : Math.max(140 + span, this.player.x - 420);
     let x = start;
     for (const id of list) {
       const elite = !ENEMIES[id].boss && chance(0.16 + S.chapter * 0.012)
         ? ELITES[Math.floor(rand(0, ELITES.length))] : null;
-      this.enemies.push(new Enemy(id, clamp(x + rand(-40, 60), 120, ARENA - 120), elite));
+      const px = clamp(x + rand(-30, 40), 130, ARENA - 130);
+      const e = new Enemy(id, px, elite);
+      // Face the player from the moment they exist, so a spawn is never seen
+      // with its back turned for the frame before the AI first ticks.
+      e.dir = px > this.player.x ? -1 : 1;
+      this.enemies.push(e);
       x += dir * rand(110, 180);
     }
+    this.woundBosses();
   }
 
   /**
@@ -2260,8 +2455,13 @@ export class Battle {
     this.pendingT -= dt;
     const alive = this.enemies.filter((e) => !e.dead).length;
     if (alive > 2 && this.pendingT > 0) return;
-    this.place(this.pending, -1);
-    this.fx.float(this.player.x, this.player.y - 250, '증원!', '#e0806a', 22);
+    // Prefer the far side so reinforcements genuinely flank, but only if that
+    // side has room -- otherwise they would pile into the wall beside the
+    // player, which looks like a spawn glitch rather than a pincer.
+    const back = this.pickFlank(this.pending.length, -(this.frontDir || 1));
+    this.place(this.pending, back);
+    this.fx.float(this.player.x, this.player.y - 250,
+      back === this.frontDir ? '증원!' : '등 뒤로 증원!', '#e0806a', 22);
     sfx.roar();
     this.pending = null;
   }
@@ -2786,7 +2986,9 @@ export class Battle {
     }
     // Refraction reads the frame as painted so far, so it must run after the
     // bodies and before the sparks that should stay crisp on top of it.
-    this.fx.drawShock(ctx, this.cam, W, H);
+    if (quality.heavy || this.fx.shocks.length === 1) {
+      this.fx.drawShock(ctx, this.cam, W, H);
+    }
     this.fx.draw(ctx, this.cam);
     this.drawForeground(ctx);
 
@@ -2796,7 +2998,7 @@ export class Battle {
     // means masking each one through its own colour on a scratch canvas --
     // stamping the frame twice additively just trebles the brightness and
     // whites the screen out.
-    if (this.fx.aberr > 0.6) {
+    if (this.fx.aberr > 0.6 && quality.heavy) {
       const a = Math.min(7, this.fx.aberr * 0.5);
       const sc = aberrCanvas(W, H);
       const g = sc.getContext('2d');
@@ -2865,12 +3067,55 @@ export class Battle {
     if (button(ctx, { x: bx + 134, y: 352, w: 126, h: 34 },
       `효과음 ${settings.sfx ? '켬' : '끔'}`, { tone: 'ghost' })) toggleSfx();
 
+    // ---- accessibility, reachable from the one screen that is always available
+    if (button(ctx, { x: bx, y: 392, w: 126, h: 30 },
+      `색약 배려 ${access.colorSafe ? '켬' : '끔'}`,
+      { tone: 'ghost', small: true })) {
+      access.colorSafe = !access.colorSafe;
+      saveAccess();
+    }
+    if (button(ctx, { x: bx + 134, y: 392, w: 126, h: 30 },
+      `글자 ${Math.round((access.textScale || 1) * 100)}%`,
+      { tone: 'ghost', small: true })) {
+      const steps = [1, 1.15, 1.3, 0.9];
+      access.textScale = steps[(steps.indexOf(access.textScale || 1) + 1) % steps.length];
+      saveAccess();
+    }
+
+    // ---- rebinding. Click a key, then press the one you want.
+    const ACTIONS = [['attack', '공격'], ['guard', '방어'], ['dash', '대시'],
+      ['jump', '점프'], ['left', '왼쪽'], ['right', '오른쪽']];
+    if (this.rebinding) {
+      const code = lastPressedCode();
+      if (code && code !== 'Escape') {
+        rebind(this.rebinding, code);
+        this.rebinding = null;
+      } else if (code === 'Escape') {
+        this.rebinding = null;
+      }
+    }
+    // Six bindings plus a reset, laid out from a single pitch so they cannot
+    // overlap: 7 slots of 76px with 4px gaps, centred.
+    const PITCH = 80, BW = 76;
+    const rowW = PITCH * (ACTIONS.length + 1) - (PITCH - BW);
+    const rx = (W - rowW) / 2;
+    ACTIONS.forEach(([act, label], i) => {
+      const on = this.rebinding === act;
+      if (button(ctx, { x: rx + i * PITCH, y: 430, w: BW, h: 30 },
+        on ? '누르세요' : `${label} ${codeLabel(KEYS[act][0])}`,
+        { tone: on ? 'primary' : 'ghost', small: true })) {
+        this.rebinding = act;
+      }
+    });
+    if (button(ctx, { x: rx + ACTIONS.length * PITCH, y: 430, w: BW, h: 30 }, '기본',
+      { tone: 'ghost', small: true })) {
+      resetBindings();
+    }
+
     text(ctx,
       `이동 ${keyLabel.move} · 점프 ${keyLabel.jump} · 공격 ${keyLabel.attack}`
       + ` · 방어 ${keyLabel.guard} · 대시 ${keyLabel.dash}`,
-      W / 2, H - 46, { size: 13, align: 'center', color: '#9d8e70' });
-    text(ctx, '공격을 꾹 누르면 차지 강타 · 공중 공격은 내리찍기 · 예비동작에 맞춰 방어하면 반격',
-      W / 2, H - 24, { size: 11, align: 'center', color: '#7d7159' });
+      W / 2, H - 24, { size: 12, align: 'center', color: '#9d8e70' });
   }
 
   drawBackdrop(ctx) {
@@ -3163,6 +3408,19 @@ export class Battle {
       if (open) {
         text(ctx, '지금', bx + BW + 8, by + 6,
           { size: 10, weight: 800, color: '#8fd8ff' });
+      }
+      // 21. The rhythm bonus is the deepest thing in the combat and it was
+      // taught by a five-pixel gauge. Coach it explicitly until the player has
+      // landed a handful, then never again.
+      if ((S.tally?.timedHits || 0) < 6) {
+        text(ctx, open
+          ? '지금 눌러라 — 정확한 연격'
+          : '칼이 멎는 순간에 다시 누르면 더 세다',
+        bx, by + 22, {
+          size: 11, weight: 700,
+          color: open ? '#8fd8ff' : '#a89878',
+          shadow: 'rgba(0,0,0,.9)',
+        });
       }
     }
 

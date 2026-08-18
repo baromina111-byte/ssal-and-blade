@@ -7,10 +7,10 @@ import { button } from '../core/ui.js';
 import {
   text, panel, wrapText, clamp, won, drawSprite, easeOut, roundRect,
 } from '../core/util.js';
-import { STORY, ENDINGS } from '../data/gamedata.js';
-import { chooseOption } from '../game/economy.js';
+import { STORY, ENDINGS, STAGES, CITIES } from '../data/gamedata.js';
+import { chooseOption, shareSpoils } from '../game/economy.js';
 import {
-  S, monthLabel, netWorth, hasSave, GOAL_WORTH, MAX_MONTHS, stored, capacity,
+  S, monthLabel, netWorth, hasSave, GOAL_WORTH, MAX_MONTHS, stored, capacity, rank,
   DIFFICULTIES,
 } from '../game/state.js';
 
@@ -233,7 +233,22 @@ export class MonthReport {
       ctx.beginPath(); ctx.arc(196, 214, 40, 0, Math.PI * 2); ctx.stroke();
     }
     text(ctx, `【 ${ev.title} 】`, 254, 194, { size: 18, weight: 800, color: '#e0b455' });
+    // 14. Grade last month's intel where the player can see whether it was
+    // worth the coin.
+    if (this.r.foretold) {
+      text(ctx, this.r.intelHit ? '첩보대로다' : '첩보가 틀렸다', 810, 194, {
+        size: 11, weight: 700, align: 'right',
+        color: this.r.intelHit ? '#7fc98f' : '#e0806a',
+      });
+    }
     wrapText(ctx, ev.text, 254, 208, 560, 20, { size: 13, color: '#c3b18c' });
+    // The month's lesser card, so a 225-event deck is actually read.
+    if (this.r.rumor) {
+      text(ctx, `그리고 — ${this.r.rumor.title}`, 254, 252,
+        { size: 11, weight: 700, color: '#8fb0c8' });
+      wrapText(ctx, this.r.rumor.text, 254, 266, 540, 16,
+        { size: 10, color: '#8d8069' });
+    }
 
     // ledger lines
     const b = this.r.bill;
@@ -347,18 +362,41 @@ export class Ending {
       { size: 17, color: '#e6d7b4', align: 'center' });
 
     const cleared = Object.keys(S.cleared).length;
+    // Was hardcoded to 11 while nineteen stages shipped, so a full clear read
+    // as 19/11.
+    const held = Object.values(S.holders || {}).filter((h) => h === 'joseon').length;
     const rows = [
       ['최종 순자산', `${won(netWorth())}냥`],
-      ['평정한 전장', `${cleared} / 11`],
+      ['평정한 전장', `${cleared} / ${STAGES.length}`],
       ['치른 전투', `${S.stats.battles}승 · ${S.stats.kills}명 처치`],
       ['거래한 물량', `${won(S.stats.traded)}단위`],
+      // 25. The strategy layer belongs in the closing ledger too: a run spent
+      // building a house and holding ground read identically to one that never
+      // opened the 경략 tab.
+      ['작위 · 상단', `${rank().name} · 식솔 ${(S.crew || []).length}명`
+        + (S.sworn ? ' · 의형제' : '')],
+      ['되찾은 고을', `${held} / ${CITIES.length}`],
     ];
-    panel(ctx, W / 2 - 200, 330, 400, 118, { fill: 'rgba(10,8,6,.86)' });
+    panel(ctx, W / 2 - 220, 326, 440, 170, { fill: 'rgba(10,8,6,.86)' });
     rows.forEach(([a, b], i) => {
-      const y = 356 + i * 26;
-      text(ctx, a, W / 2 - 180, y, { size: 13, color: '#a39373' });
-      text(ctx, b, W / 2 + 180, y, { size: 13, weight: 700, color: '#f0dfb4', align: 'right' });
+      const y = 350 + i * 25;
+      text(ctx, a, W / 2 - 200, y, { size: 13, color: '#a39373' });
+      text(ctx, b, W / 2 + 200, y, { size: 13, weight: 700, color: '#f0dfb4', align: 'right' });
     });
+
+    // A closing line drawn from how the run was actually played.
+    const coda = S.sworn && held === CITIES.length
+      ? '팔도가 조용해졌고, 곁에는 의형제가 남았다.'
+      : held === CITIES.length ? '남의 깃발은 하나도 남지 않았다.'
+        : rank().id === 'gongsin' ? '나라가 그 이름을 기록했다.'
+          : (S.crew || []).length >= 8 ? '식솔이 늘어 상단이 한 마을만큼 되었다.'
+            : held <= 2 ? '지켜 낸 고을은 몇 되지 않았다.'
+              : null;
+    if (coda) {
+      text(ctx, coda, W / 2, 508, {
+        size: 12, align: 'center', color: '#c3b18c', shadow: 'rgba(0,0,0,.9)',
+      });
+    }
     text(ctx, this.data.cond, W / 2, 318,
       { size: 11, align: 'center', color: '#8d8069' });
     ctx.globalAlpha = 1;
@@ -381,6 +419,23 @@ export class BattleResult {
 
   update(dt) {
     this.t += dt;
+    // 4 + 20. 논공행상 waits for an answer -- but only while the answer is still
+    // interesting. Asked after every single win it becomes a keypress, so once
+    // the player sets a standing policy it is applied silently and reported.
+    if (this.spoils === undefined && this.p.win && (S.crew || []).length
+      && this.p.loot > 200) {
+      if (S.spoilsPolicy === 'share') {
+        this.spoils = Math.round(this.p.loot * 0.3);
+        shareSpoils(this.spoils);
+        this.auto = true;
+      } else if (S.spoilsPolicy === 'keep') {
+        this.spoils = 0;
+        this.auto = true;
+      } else {
+        this.spoils = null;               // pending
+      }
+    }
+    if (this.spoils === null) return;
     if (this.t > 0.6 && (confirmPressed() || pointer.clicked)) this.onDone();
   }
 
@@ -420,6 +475,46 @@ export class BattleResult {
         color: p.win ? '#e0b455' : '#e0806a',
       });
     });
+
+    // 4. Distribute the spoils, or keep them. Loyalty is bought here or not at
+    // all -- there is no other lever that moves the whole house at once.
+    if (this.spoils === null) {
+      const share = Math.round(p.loot * 0.3);
+      text(ctx, '논공행상', W / 2, 412, {
+        size: 13, weight: 700, align: 'center', color: '#e0b455',
+      });
+      if (button(ctx, { x: W / 2 - 300, y: 424, w: 180, h: 38 },
+        `${won(share)}냥을 나눈다`, { tone: 'primary', sub: '충성 오름' })) {
+        shareSpoils(share);
+        this.spoils = share;
+      }
+      if (button(ctx, { x: W / 2 - 110, y: 424, w: 180, h: 38 },
+        '전부 곳간에', { tone: 'ghost', sub: '충성 그대로' })) {
+        this.spoils = 0;
+      }
+      // The standing-policy buttons: same two answers, but remembered.
+      if (button(ctx, { x: W / 2 + 80, y: 424, w: 110, h: 38 },
+        '앞으로 늘', { tone: 'ghost', sub: '나눈다' })) {
+        S.spoilsPolicy = 'share';
+        shareSpoils(share);
+        this.spoils = share;
+      }
+      if (button(ctx, { x: W / 2 + 198, y: 424, w: 110, h: 38 },
+        '앞으로 늘', { tone: 'ghost', sub: '곳간에' })) {
+        S.spoilsPolicy = 'keep';
+        this.spoils = 0;
+      }
+      ctx.globalAlpha = 1;
+      return;
+    }
+    if (this.spoils > 0) {
+      text(ctx, `${won(this.spoils)}냥을 나눴다.${this.auto ? ' (정해둔 대로)' : ''}`,
+        W / 2, 418, { size: 12, align: 'center', color: '#7fc98f' });
+    }
+    if (p.wounded) {
+      text(ctx, '상단 사람이 다쳤다.', W / 2, 436,
+        { size: 12, align: 'center', color: '#e0806a' });
+    }
 
     // The stage's closing beat, so each victory advances the story on screen.
     if (p.epilogue) {

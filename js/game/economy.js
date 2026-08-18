@@ -7,14 +7,21 @@ import { ALL_EVENTS } from '../data/events.js';
 import { DEEDS, TITLES, CREW, PERKS } from '../data/features.js';
 import { TREASURES } from '../data/treasures.js';
 import {
+  LOYALTY, RANKS, rankOf, rankPerks, DEVELOP, STRATAGEMS, DUEL, PROVISION, HOLDERS,
+  SEARCH, TRAIN, SCOUT, TRIBUTE, PATROL, RELATION, relTier, RESOURCES,
+} from '../data/rtk.js';
+import {
   S, city, good, capacity, stored, buyPrice, sellPrice, applyImpact, priceOf,
   stockValue,
   addLog, addThreat, addRep, netWorth, upLevel, trinketMod, diff, logPrices,
-  treasureMod, ownsWeapon, masteredCount,
+  treasureMod, officer, bestStat, devLevel, relation, relationTier,
+  res, addRes, spendRes, rank, perks, writeLegacy, heldBy,
+  readCareer, bankCareer, ownsWeapon, masteredCount,
   cityUnlocked, nextStage,
   GOAL_WORTH, MAX_MONTHS, AP_PER_MONTH, MARTIAL_ENDING_AT,
 } from './state.js';
 import { clamp, rand, chance, pick, won } from '../core/util.js';
+import { sfx } from '../core/audio.js';
 
 // ------------------------------------------------------------- trading
 
@@ -112,7 +119,13 @@ export function rollOffers() {
   const out = [];
   const n = 2 + (S.chapter >= 5 ? 1 : 0);
   for (let i = 0; i < n; i++) {
-    const patron = pick(CONTRACT_PATRONS);
+    // 13. A patron who has been neglected stops offering, and one you have
+    // cultivated offers more. Cold patrons are filtered out entirely, so
+    // relations decide who is even at the table.
+    const willing = CONTRACT_PATRONS.filter((p) => relationTier(p.id).mul > 0);
+    if (!willing.length) break;
+    const patron = pick(willing);
+    const relMul = relationTier(patron.id).mul;
     const goodId = pick(patron.pref);
     const g = good(goodId);
     const to = pick(open);
@@ -135,7 +148,8 @@ export function rollOffers() {
     qty = clamp(Math.min(qty, Math.max(3, affordable)), 3, Math.max(3, room));
 
     // The premium over the going rate is what makes it worth planning around.
-    const pay = Math.round(base * qty * rand(1.35, 1.7));
+    const pay = Math.round(base * qty * rand(1.35, 1.7) * relMul
+      * (1 + perks().payBonus));
     // 착수금: patrons front part of the fee so the goods can actually be bought.
     const advance = Math.round(pay * 0.35);
     out.push({
@@ -169,8 +183,18 @@ export function deliverContract(c) {
   S.money += c.pay - (c.advance || 0);   // the advance was paid on signing
   addRep(c.rep);
   S.contractsDone += 1;
+  S.rel[c.patron] = clamp((S.rel[c.patron] || 0) + 6, 0, 100);
+  // Contracts are also where strategic resources come from -- patrons pay part
+  // of a large order in horses, iron or powder rather than coin.
+  if (c.qty >= 14) {
+    const kind = { army: 'iron', palace: 'horse', guild: 'horse',
+      temple: 'iron', waegwan: 'powder' }[c.patron] || 'iron';
+    addRes(kind, 1 + Math.floor(c.qty / 22));
+    addLog(`${RESOURCES.find((r) => r.id === kind).name}을(를) 받았다.`, 'info');
+  }
   S.contracts = S.contracts.filter((x) => x.id !== c.id);
   addLog(`${c.patronName} 납품 완료 — ${won(c.pay)}냥, 평판 +${c.rep}`, 'good');
+  sfx.deal();
   return true;
 }
 
@@ -186,6 +210,7 @@ function expireContracts() {
     S.money -= Math.min(owed, Math.max(0, S.money) + 800);
     addRep(-3);
     S.contractsFailed += 1;
+    S.rel[c.patron] = clamp((S.rel[c.patron] || 0) - 14, 0, 100);
     addLog(`${c.patronName} 납기 초과 — 위약금 ${won(owed)}냥, 평판 -3`, 'bad');
   }
   if (late.length) S.contracts = S.contracts.filter((c) => S.month <= c.due);
@@ -216,7 +241,11 @@ function rollEvent() {
   );
   if (!pool.length) return null;
 
-  const weight = (e) => e.w / (1 + (S.seenEvents[e.id] || 0) * 2.5);
+  // Cards seen this run are damped hard; cards carried in from a previous run's
+  // 후계 are damped lightly. That is what the legacy's 'lore' entry buys.
+  const weight = (e) => e.w
+    / (1 + (S.seenEvents[e.id] || 0) * 2.5)
+    / (S.knownEvents && S.knownEvents[e.id] ? 1.6 : 1);
   const total = pool.reduce((n, e) => n + weight(e), 0);
   let r = Math.random() * total;
   let ev = pool[pool.length - 1];
@@ -226,19 +255,60 @@ function rollEvent() {
   bump('eventsSeen');
   S.news = ev;
 
+  // A second, lesser card: 소문.
+  //
+  // One draw a month against a 225-card deck means a 24-month run can only ever
+  // meet 11% of it -- most of what was written is never read. A minor card runs
+  // alongside the headline: it moves prices and standing like any other, but it
+  // never carries a choice, so it adds coverage without adding a decision the
+  // player has to stop and make every single month.
+  const minor = pool.filter(
+    (e) => e !== ev && !e.pick && !S.seenEvents[e.id] && Math.abs(e.money) < 400,
+  );
+  if (minor.length && chance(0.72)) {
+    const m = pick(minor);
+    S.seenEvents[m.id] = 1;
+    bump('eventsSeen');
+    S.rumor = m;
+    applyEvent(m);
+    addLog(`${m.title} — ${m.text}`, 'info');
+  } else {
+    S.rumor = null;
+  }
+
   // A card with options waits for an answer; nothing lands until it is given.
   if (ev.pick) { S.pendingChoice = ev; return ev; }
   applyEvent(ev);
   return ev;
 }
 
-/** Apply an event's own effects (not those of a chosen option). */
+/** Events whose damage a levee can hold back. */
+const WEATHER_HARM = new Set([
+  'flood', 'typhoon', 'heavy_snow', 'hail', 'landslide', 'bridge_out',
+  'river_freeze', 'well_dry', 'warehouse_rot', 'warehouse_fire', 'fire_market',
+  'locust', 'early_frost', 'drought', 'mudslide_mine',
+]);
+
+/**
+ * Apply an event's own effects (not those of a chosen option).
+ *
+ * 2. 치수 is read here. Its label promised "재해 피해 -18%/단계" and no code
+ * looked at it, so the track was five levels of pure expense. A levee cannot
+ * stop a drought from moving the market, but it does protect this house's own
+ * money and stores from weather.
+ */
 function applyEvent(ev) {
+  const shield = WEATHER_HARM.has(ev.id)
+    ? Math.max(0.1, 1 - devLevel(S.city, 'levee') * 0.18)
+    : 1;
   for (const m of ev.mods || []) S.mods.push({ ...m });
   if (ev.threat) for (const c of CITIES) addThreat(c.id, ev.threat * rand(0.6, 1.3));
   if (ev.rep) addRep(ev.rep);
-  if (ev.money) S.money += ev.money;
+  if (ev.money) S.money += ev.money < 0 ? Math.round(ev.money * shield) : ev.money;
   if (ev.ap) S.ap = Math.max(0, S.ap + ev.ap);
+  if (shield < 1 && ev.money < 0) {
+    addLog(`둑이 버텼다 — 피해 ${Math.round((1 - shield) * 100)}% 경감`, 'good');
+  }
 }
 
 /**
@@ -262,6 +332,31 @@ export function advice() {
   // -- things that lose money if ignored
   if (S.debt > 0 && S.money < S.debt * 0.12) {
     return say(`빚이 ${won(S.debt)}냥인데 수중이 얇다. 이자가 매달 붙는다`, 'warn');
+  }
+
+  // 경략 came with twenty systems and a twelfth tab, and none of them announce
+  // themselves. A crew member walks out silently; a patron goes cold and simply
+  // stops appearing in the offer list. Both cost more than a bad trade, so they
+  // are read before the market is.
+  const quitting = (S.crew || [])
+    .map((id) => ({ id, o: officer(id), c: CREW.find((x) => x.id === id) }))
+    .filter((x) => x.c && x.o.loyalty < LOYALTY.grumble)
+    .sort((a, b) => a.o.loyalty - b.o.loyalty)[0];
+  if (quitting) {
+    const gone = quitting.o.loyalty < LOYALTY.walkout + 8;
+    return say(gone
+      ? `${quitting.c.name}의 충성이 ${Math.round(quitting.o.loyalty)}까지 떨어졌다 — 곧 떠난다`
+      : `${quitting.c.name}이 불만이다(충성 ${Math.round(quitting.o.loyalty)}). `
+        + '삯을 밀리지 말고 노획을 나눠라', 'warn');
+  }
+
+  const cold = CONTRACT_PATRONS
+    .map((p) => ({ p, n: relation(p.id) }))
+    .filter((x) => relationTier(x.p.id).mul <= 0)
+    .sort((a, b) => a.n - b.n)[0];
+  if (cold) {
+    return say(`${cold.p.name}이 등을 돌렸다(관계 ${Math.round(cold.n)}) — `
+      + '조공을 넣기 전에는 계약을 내주지 않는다', 'warn');
   }
   const dueSoon = (S.contracts || []).filter((c) => c.due <= S.month + 1);
   const notReady = dueSoon.filter((c) => !contractReady(c));
@@ -321,10 +416,16 @@ export function advice() {
       + `${best.to.name}에 풀면 길값 빼고 ${won(net)}냥 남는다`, 'good');
   }
 
-  // -- nothing to trade: point at the other half of the game
+  // -- nothing to trade: point at the other halves of the game
   const st = nextStage();
   if (st && S.ap >= 2) {
     return say(`장사로 남길 것이 마땅찮다. ${st.name} 출정이 열려 있다 — 행동 2`, 'info');
+  }
+  // A quiet month is when 경략 pays: patrolling turns an idle action into
+  // threat removed, which is the thing that keeps eating cargo on the road.
+  if (perks().patrol && S.ap >= PATROL.apCost && (S.threat[S.city] || 0) >= 30) {
+    return say(`${city().name}의 치안이 나쁘다(위협 ${Math.round(S.threat[S.city])}). `
+      + `순찰로 ${PATROL.cut} 낮출 수 있다 — 행동 ${PATROL.apCost}`, 'info');
   }
   if (stored() === 0 && S.money > 0) {
     return say('시세가 어디나 고만고만하다. 사 두고 다음 달을 기다리는 것도 방법이다', 'info');
@@ -389,10 +490,21 @@ function counters() {
   };
 }
 
-/** Award anything newly earned. Runs once a month and after each battle. */
+/**
+ * Award anything newly earned. Runs once a month and after each battle.
+ *
+ * A deed is satisfied by this run *or* by the lifetime record, whichever is
+ * further along, so the top of the ladder is a career award rather than an
+ * unreachable number.
+ */
 export function checkDeeds() {
   S.deeds = S.deeds || [];
-  const c = counters();
+  const run = counters();
+  const car = readCareer();
+  const c = {};
+  for (const k of new Set([...Object.keys(run), ...Object.keys(car)])) {
+    c[k] = Math.max(run[k] || 0, car[k] || 0);
+  }
   const won_ = [];
   for (const d of DEEDS) {
     if (S.deeds.includes(d.id)) continue;
@@ -536,8 +648,16 @@ function settle() {
 }
 
 /** Threat creeps back up wherever you are not looking. */
+/**
+ * 3. Public order slides back every month -- less so where a garrison has been
+ * paid for. The 수비 track advertised "월간 위협 상승 -30%/단계" and nothing read
+ * it, so five levels of investment did literally nothing.
+ */
 function creepThreat() {
-  for (const c of CITIES) addThreat(c.id, rand(0.6, 2.6));
+  for (const c of CITIES) {
+    const g = devLevel(c.id, 'garrison');
+    addThreat(c.id, rand(0.6, 2.6) * Math.max(0.1, 1 - g * 0.3));
+  }
 }
 
 export function endMonth() {
@@ -551,18 +671,46 @@ export function endMonth() {
   expireContracts();
   rollOffers();
   const bill = settle();
+  const rankBefore = rank().id;
   const drift = rosterMod('rep') + treasureMod('rep');
   if (drift) addRep(drift);
+
+  // ---- 경략: the strategy layer's monthly tick
+  const left = driftLoyalty();          // 2. loyalty, and anyone who walked out
+  healWounds();                         // 6. a month of recovery
+  S.usedFreeStratagem = false;          // 12. the rank privilege refreshes
+  S.offersCrew = null;
+  // A new month is a fresh road: the re-entry discount is available again.
+  S.reentryUsed = null;
+  driftHolders();                       // 19. contested regions consolidate
+  // 13 + 18. Goodwill is not permanent. A patron you never deal with cools off,
+  // and cools faster on the harder setting, so 헌납 is maintenance rather than a
+  // one-time purchase.
+  for (const p of CONTRACT_PATRONS) {
+    S.rel[p.id] = clamp((S.rel[p.id] || 0) - 1.2 * (diff().relation ?? 1), 0, 100);
+  }
   ageMods();
   driftPrices();
   creepThreat();
   S.month += 1;
-  S.ap = AP_PER_MONTH;
+  // Rank privileges and the easy setting both promise extra actions; this is
+  // where the promise is kept. 첨사 and 공신 each grant one.
+  S.ap = AP_PER_MONTH + perks().ap + (diff().apBonus || 0);
   // Twelve chapters exist, so the cap is twelve. It used to be eleven, which
   // meant 종장 was written, shipped, and never once shown: month 22 clamped
   // back to 11 and month 24 went straight to the ending screen.
   S.chapter = Math.min(12, 1 + Math.floor(S.month / 2));
   const ev = rollEvent();
+
+  // 14. Intel bought last month was a prediction about this card, so it is
+  // graded here -- after the draw, which is the only point where there is
+  // anything to compare it against. It used to be cleared before the roll,
+  // which meant the player paid for a forecast that was never shown or scored.
+  const foretold = S.intel || null;
+  S.intelHit = !!(foretold && ev && foretold.id === ev.id);
+  S.lastIntel = foretold;
+  S.intel = null;
+
   const worth = netWorth();
 
   // Two independent conditions, judged when the ledger closes in month 24:
@@ -588,13 +736,28 @@ export function endMonth() {
         : rich ? 'magnate'
           : martial ? 'musin' : 'merchant';
   }
+  // 12 + 24. A promotion is the loudest thing that happens in a hub month, and
+  // it used to happen in silence with no line in the log.
+  const promoted = rank().id !== rankBefore ? rank() : null;
+  if (promoted) {
+    addLog(`${promoted.name}에 올랐다 — ${promoted.perk}`, 'good');
+    sfx.promote();
+  }
+
   peak('peakWorth', worth);
   if (!S.debt) bump('debtFreeMonths');
   const earned = checkDeeds();
 
-  if (ending) S.ended = ending;
+  if (ending) {
+    S.ended = ending;
+    // 20. Persist what carries forward. This is the only place a run ends, so
+    // it is the only place the legacy and the career record can be taken.
+    writeLegacy(makeLegacy());
+    bankCareer(counters());
+  }
 
-  return { bill, ev, worth, ending, earned, choice: S.pendingChoice };
+  return { bill, ev, rumor: S.rumor, worth, ending, earned, left, foretold,
+    promoted, intelHit: S.intelHit, choice: S.pendingChoice };
 }
 
 export function borrow(n) {
@@ -642,4 +805,326 @@ export function grantReward(reward, regionId, threatCut) {
   addLog(`전투 승리 — ${won(reward.money)}냥, 쌀 ${kept}섬, 평판 +${reward.rep}` +
     (dropped > 0 ? ` (창고가 좁아 ${dropped}섬은 두고 왔다)` : ''), 'good');
   return { kept, dropped };
+}
+
+// ==================================================================== 경략
+//
+// The strategy layer's verbs. Each one is a thing the player spends something
+// on -- coin, an action, a resource, or standing -- and gets a decision back.
+
+// -------------------------------------------------- 2·4·5·6. officers
+
+/**
+ * Monthly loyalty drift. Wages paid on time hold people; idleness, unpaid
+ * months and a poor reputation lose them. The house's best 매력 slows the bleed,
+ * which is what makes a charming quartermaster worth their wage.
+ */
+export function driftLoyalty() {
+  const charm = bestStat('chr');
+  const gone = [];
+  for (const id of [...(S.crew || [])]) {
+    const o = officer(id);
+    if (o.sworn) continue;                      // an oath does not drift
+    let d = (-1.6 * (diff().loyalty ?? 1)) + (charm - 60) * 0.05 + (S.rep - 40) * 0.03;
+    if (S.debt > 8000) d -= 2.2;                // they can see the books
+    if (o.wounded) d -= 1.2;
+    o.loyalty = clamp(o.loyalty + d, 0, LOYALTY.max);
+    if (o.loyalty < LOYALTY.walkout) {
+      dismissCrew(id);
+      gone.push(CREW.find((c) => c.id === id)?.name || id);
+    }
+  }
+  if (gone.length) {
+    addLog(`${gone.join(', ')}이(가) 상단을 떠났다.`, 'bad');
+    sfx.leave();
+  }
+  return gone;
+}
+
+/** 4. Hand out spoils after a win. Costs coin, buys loyalty across the house. */
+export function shareSpoils(amount) {
+  if (S.money < amount || amount <= 0) return false;
+  S.money -= amount;
+  const per = amount / Math.max(1, (S.crew || []).length);
+  const gain = clamp(per / 90, 1, 14);
+  for (const id of S.crew || []) {
+    const o = officer(id);
+    o.loyalty = clamp(o.loyalty + gain, 0, LOYALTY.max);
+  }
+  bump('spoilsShared');
+  addLog(`논공행상 — ${won(amount)}냥을 나눴다. 충성 +${gain.toFixed(0)}`, 'good');
+  return true;
+}
+
+/** 5. Bind one crew member by oath. Permanent, exclusive, and not cheap. */
+export function swearOath(id) {
+  if (S.sworn) return false;
+  if (!(S.crew || []).includes(id)) return false;
+  const cost = 2400;
+  if (S.money < cost) return false;
+  S.money -= cost;
+  S.sworn = id;
+  const o = officer(id);
+  o.sworn = true;
+  o.loyalty = LOYALTY.max;
+  for (const k of Object.keys(o.stats)) o.stats[k] = Math.min(99, o.stats[k] + 5);
+  addRep(6);
+  addLog(`${CREW.find((c) => c.id === id)?.name}과 의형제를 맺었다.`, 'good');
+  return true;
+}
+
+/** 6. Wounds heal on their own, a month at a time. */
+export function healWounds() {
+  for (const id of S.crew || []) {
+    const o = officer(id);
+    if (o.wounded > 0) o.wounded -= 1;
+  }
+}
+
+/** Called after a lost fight: someone who was carrying a spear paid for it. */
+export function woundSomeone() {
+  const fighters = (S.crew || []).filter(
+    (id) => CREW.find((c) => c.id === id)?.fights && !officer(id).wounded,
+  );
+  if (!fighters.length) return null;
+  const id = pick(fighters);
+  officer(id).wounded = 1 + Math.floor(rand(0, 2));
+  const name = CREW.find((c) => c.id === id)?.name;
+  addLog(`${name}이(가) 다쳤다. ${officer(id).wounded}달 요양.`, 'bad');
+  return id;
+}
+
+// ------------------------------------------------------- 3·7·8. hiring
+
+/**
+ * 3. A hire can say no. Pride scales with what they cost, and your standing
+ * plus the house's 매력 is the counter-argument -- so a famous house recruits
+ * people a rich unknown cannot.
+ */
+export function recruitOdds(c) {
+  const pull = S.rep * 0.9 + bestStat('chr') * 0.35 + rankOf(S.rep).at * 0.2;
+  const pride = 26 + c.wage * 0.16;
+  return clamp((pull - pride) / 60 + 0.5, 0.12, 0.96);
+}
+
+/** 7. Spend an action looking for someone in this town. */
+export function searchTalent() {
+  if (S.ap < SEARCH.apCost) return { ok: false, why: '행동이 없다' };
+  const cost = Math.round(SEARCH.cost * perks().search);
+  if (S.money < cost) return { ok: false, why: '돈이 모자란다' };
+  S.ap -= SEARCH.apCost;
+  S.money -= cost;
+
+  const pool = CREW.filter(
+    (c) => S.chapter >= c.from && !(S.crew || []).includes(c.id),
+  );
+  const odds = SEARCH.baseOdds + devLevel(S.city, 'market') * 0.05
+    + bestStat('chr') * 0.002;
+  if (!pool.length || !chance(odds)) {
+    addLog('사람을 구하지 못했다.', 'info');
+    return { ok: true, found: null };
+  }
+  const found = pick(pool);
+  S.offersCrew = [found.id];
+  addLog(`${found.name}을(를) 찾았다 — ${found.role}`, 'good');
+  return { ok: true, found };
+}
+
+/** 8. Train one stat of one officer. */
+export function trainOfficer(id, statKey) {
+  if (S.money < TRAIN.cost) return false;
+  if (S.ap < 1) return false;
+  const o = officer(id);
+  if (o.stats[statKey] >= TRAIN.cap) return false;
+  S.money -= TRAIN.cost;
+  S.ap -= 1;
+  o.stats[statKey] = Math.min(TRAIN.cap, o.stats[statKey] + TRAIN.gain);
+  o.loyalty = clamp(o.loyalty + 2, 0, LOYALTY.max);
+  bump('trained');
+  return true;
+}
+
+// ------------------------------------------------ 9·10. domestic
+
+/** 9. Raise one development track in the town you are standing in. */
+export function develop(d) {
+  const lv = devLevel(S.city, d.id);
+  if (lv >= d.max) return false;
+  const cost = Math.round(d.cost * (1 + lv * 0.55));
+  if (S.money < cost) return false;
+  if (d.res && !spendRes(d.res)) return false;
+  S.money -= cost;
+  S.dev[S.city][d.id] = lv + 1;
+  bump('developed');
+  addLog(`${city().name} ${d.name} ${lv + 1}단계.`, 'good');
+  sfx.build();
+  return true;
+}
+
+export const developCost = (d) =>
+  Math.round(d.cost * (1 + devLevel(S.city, d.id) * 0.55));
+
+/** 10. Spend an action on public order instead of profit. */
+export function patrol() {
+  if (!perks().patrol) return { ok: false, why: '향리 이상이어야 한다' };
+  if (S.ap < PATROL.apCost) return { ok: false, why: '행동이 없다' };
+  S.ap -= PATROL.apCost;
+  const cut = PATROL.cut + bestStat('cmd') * 0.12;
+  addThreat(S.city, -cut);
+  addRep(1);
+  addLog(`${city().name} 순찰 — 치안 회복.`, 'good');
+  return { ok: true, cut: Math.round(cut) };
+}
+
+// ------------------------------------------- 13·14·15. foreign
+
+/** 15. Buy goodwill with a patron. */
+export function sendTribute(patronId) {
+  if (S.money < TRIBUTE.cost) return false;
+  S.money -= TRIBUTE.cost;
+  S.rel[patronId] = clamp((S.rel[patronId] || 0) + TRIBUTE.gain, 0, 100);
+  const p = CONTRACT_PATRONS.find((x) => x.id === patronId);
+  addLog(`${p?.name}에 헌납 — 우호 +${TRIBUTE.gain}`, 'info');
+  return true;
+}
+
+/** 14. Pay for a look at next month. Accuracy rides on the house's 지력. */
+export function scout() {
+  if (S.money < SCOUT.cost) return false;
+  if (S.intel) return false;
+  S.money -= SCOUT.cost;
+  const acc = clamp(bestStat('int') / 100, 0.4, 0.95);
+  const pool = ALL_EVENTS.filter(
+    (e) => S.chapter + 1 >= e.from && S.chapter + 1 <= (e.to ?? 99),
+  );
+  const real = pick(pool);
+  // A poor 지력 sometimes brings back the wrong rumour, which is the point of
+  // having a stat for it at all.
+  S.intel = {
+    id: chance(acc) ? real.id : pick(pool).id,
+    sure: acc,
+  };
+  addLog('첩보를 샀다. 다음 달의 기별이 들어왔다.', 'info');
+  return true;
+}
+
+// ------------------------------------------ 16·17·18. war preparation
+
+/** 16. Buy a stratagem; it resolves when the next sortie opens. */
+/** Every stratagem currently laid, oldest first. */
+export const laidStratagems = () => S.stratagems || (S.stratagems = []);
+
+export function buyStratagem(st) {
+  const held = laidStratagems();
+  if (held.length >= perks().slots) return false;
+  if (held.includes(st.id)) return false;      // no doubling one up
+  const free = perks().freeStratagem > 0 && !S.usedFreeStratagem;
+  const cost = free ? 0 : st.cost;
+  if (S.money < cost) return false;
+  if (st.res && !spendRes(st.res)) return false;
+  S.money -= cost;
+  if (free) S.usedFreeStratagem = true;
+  held.push(st.id);
+  addLog(`계략을 준비했다 — ${st.name}`, 'info');
+  return true;
+}
+
+/**
+ * Resolve the held stratagem. Returns the effect the battle should apply, or
+ * null when it fails -- rolled against the best 지력 in the house.
+ */
+/**
+ * Roll every laid stratagem. Returns an array so the battle can apply them in a
+ * fixed order -- see applyStratagems() there for why order has to be pinned.
+ */
+export function resolveStratagem() {
+  const held = laidStratagems();
+  if (!held.length) return [];
+  S.stratagems = [];
+  const out = [];
+  for (const id of held) {
+    const st = STRATAGEMS.find((x) => x.id === id);
+    if (!st) continue;
+    const odds = clamp((0.25 + (bestStat('int') - st.int) / 70)
+      * (diff().stratagem ?? 1), 0.15, 0.95);
+    if (chance(odds)) {
+      bump('stratagems');
+      addLog(`${st.name} 성공.`, 'good');
+      sfx.scheme();
+      out.push({ id, ok: true, name: st.name });
+    } else {
+      addLog(`${st.name} 실패 — ${st.fail}`, 'bad');
+      out.push({ id, ok: false, name: st.name, fail: st.fail });
+    }
+  }
+  return out;
+}
+
+/** 18. Set aside provisions for the next sortie. */
+export function loadProvisions() {
+  const need = PROVISION.perSortie;
+  if ((S.stock.rice || 0) < need) return false;
+  S.stock.rice -= need;
+  S.provisions += need;
+  addLog(`군량 ${need}섬을 실었다.`, 'info');
+  return true;
+}
+
+/** Consumed when a sortie opens; an unfed march fights worse. */
+export function spendProvisions() {
+  if (S.provisions >= PROVISION.perSortie) {
+    S.provisions -= PROVISION.perSortie;
+    return true;
+  }
+  return false;
+}
+
+// ------------------------------------------------------- 19. territory
+
+/**
+ * Ownership shifts. Clearing a stage in a region hands it back; leaving a
+ * contested region alone lets its holder settle in, which shows up as a price
+ * premium and worse ambush odds.
+ */
+export function claimRegion(regionId, holder = 'joseon') {
+  if (!regionId) return;
+  const was = S.holders[regionId];
+  if (was === holder) return;
+  S.holders[regionId] = holder;
+  const h = HOLDERS[holder];
+  addLog(`${city(regionId)?.name || regionId} — ${h.name}의 손에 들어갔다.`,
+    holder === 'joseon' ? 'good' : 'bad');
+}
+
+/**
+ * Regions under pressure change hands on their own. A town whose threat has
+ * been left to climb will eventually be taken, and one you have kept quiet
+ * drifts back -- so ignoring the map has a cost even in a purely trading run.
+ */
+function driftHolders() {
+  for (const c of CITIES) {
+    const t = S.threat[c.id] || 0;
+    const held = heldBy(c.id);
+    if (held === 'joseon' && t > 78 && chance(0.22)) {
+      claimRegion(c.id, S.chapter >= 5 ? 'jp' : 'bandit');
+    } else if (held !== 'joseon' && t < 30 && chance(0.3)) {
+      claimRegion(c.id, 'joseon');
+    }
+  }
+}
+
+/** 11. Re-exported so callers reach resources through the same module. */
+export { res, addRes, spendRes } from './state.js';
+
+// --------------------------------------------------------- 20. legacy
+
+/** Snapshot what a finished run leaves behind. */
+export function makeLegacy() {
+  return {
+    purse: Math.max(0, Math.round(netWorth() * 0.02)),
+    rep: Math.round(S.rep * 0.15),
+    events: Object.keys(S.seenEvents || {}),
+    ending: S.ended,
+    at: S.month,
+  };
 }

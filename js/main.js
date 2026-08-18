@@ -6,14 +6,17 @@ import {
   initInput, endKeyFrame, endPointerFrame, setTouchVisible,
 } from './core/input.js';
 import { unlockAudio, playMusic } from './core/audio.js';
+import { loadAccess } from './core/util.js';
 import { MANIFEST, STORY } from './data/gamedata.js';
 import {
   S, newGame, loadGame, saveGame, clearSave, addLog,
 } from './game/state.js';
 import {
   endMonth, grantReward, loseCargo, rollOffers, rollTreasure, checkDeeds, bump, peak,
+  resolveStratagem, spendProvisions, woundSomeone, claimRegion,
 } from './game/economy.js';
-import { Battle } from './game/battle.js';
+import { addRes } from './game/state.js';
+import { Battle, noteFrame } from './game/battle.js';
 import { Hub } from './scenes/hub.js';
 import { Title, Story, MonthReport, Ending, BattleResult } from './scenes/screens.js';
 
@@ -77,7 +80,23 @@ function toHub() {
 }
 
 function startBattle(stage) {
-  goto(() => new Battle(stage, (res) => onBattleDone(stage, res)));
+  // Everything the hub prepared is resolved here, once, and handed to the stage
+  // -- the battle itself stays a pure consumer of the strategy layer.
+  //
+  // An ambush on the road is deliberately exempt: there was no chance to lay a
+  // stratagem or load provisions for a fight you did not choose, so it neither
+  // consumes preparation nor suffers for lacking it. `fed: true` states that
+  // rather than leaving it to fall out of a ternary.
+  const prepared = stage.ambush ? { ...stage, fed: true } : {
+    ...stage,
+    stratagem: resolveStratagem(),
+    fed: spendProvisions(),
+    duelWon: S.duelWon || false,
+    duelLost: S.duelLost || false,
+  };
+  S.duelWon = false;
+  S.duelLost = false;
+  goto(() => new Battle(prepared, (res) => onBattleDone(prepared, res)));
 }
 
 function onBattleDone(stage, res) {
@@ -103,6 +122,10 @@ function onBattleDone(stage, res) {
     if (stage.objective === 'escort') bump('escorts');
     if (stage.objective === 'hold') bump('holds');
     if (res.noHit) bump('noHitClears');
+    // 19. Winning in a region hands it back, and the spoils include materiel.
+    if (stage.region) claimRegion(stage.region, 'joseon');
+    if (stage.boss) { addRes('iron', 2); addRes('powder', 1); }
+    else if (Math.random() < 0.4) addRes(Math.random() < 0.5 ? 'iron' : 'horse', 1);
     if (res.clutch) bump('clutchClears');
     peak('bestCombo', res.bestCombo || 0);
     // 보패 only ever turn up here -- they are never for sale.
@@ -112,6 +135,16 @@ function onBattleDone(stage, res) {
     S.money += res.loot;
     S.stats.deaths += 1;
     payload.lost = loseCargo(stage.ambush ? 0.28 : 0.18);
+    // 15. A defeat leaves the road already walked, so the next attempt at the
+    // same stage costs one action instead of two.
+    //
+    // Once, though. Granted freely it is not a second chance, it is an infinite
+    // one: a soak run took the discount 113 times, spent the whole campaign
+    // dying and retrying, and finished with negative net worth and four failed
+    // contracts. One discount per stage per month keeps it a reprieve.
+    if (stage.id && S.reentryUsed !== stage.id) S.reentry = stage.id;
+    // 6. A defeat costs a fighter a month or two, not just cargo.
+    payload.wounded = woundSomeone();
   }
   saveGame();
 
@@ -199,8 +232,12 @@ function frame(now) {
   requestAnimationFrame(frame);
   const dt = (now - last) / 1000;
   last = now;
+  const t0 = performance.now();
   step(dt);
   render();
+  // Feeds the automatic quality switch in battle.js: if this machine cannot
+  // afford the refraction and chromatic passes, they turn themselves off.
+  noteFrame(performance.now() - t0);
   endPointerFrame();
 }
 
@@ -209,6 +246,7 @@ const isCoarse = matchMedia('(pointer: coarse)').matches;
 // ---------------------------------------------------------------- boot
 
 async function boot() {
+  loadAccess();
   initInput(canvas);
   const bar = document.getElementById('bar');
   const pct = document.getElementById('pct');

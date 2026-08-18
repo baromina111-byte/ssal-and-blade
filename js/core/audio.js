@@ -119,6 +119,36 @@ export const sfx = {
   select: () => tone(520, { type: 'triangle', d: 0.05, peak: 0.16 }),
   deny: () => tone(190, { type: 'square', d: 0.15, peak: 0.28, slide: -60 }),
   bell: () => { tone(880, { type: 'sine', d: 1.1, peak: 0.28 }); tone(1320, { type: 'sine', d: 0.9, peak: 0.14, t: 0.03 }); },
+
+  // ---- 경략. The hub had nine sound calls in the whole file, so a contract
+  // closing, a promotion and a man walking out were all silent.
+  /** A deal struck: two clean notes, like a seal pressed twice. */
+  deal: () => {
+    tone(660, { type: 'triangle', d: 0.12, peak: 0.3 });
+    tone(990, { type: 'triangle', d: 0.18, peak: 0.24, t: 0.07 });
+  },
+  /** Promotion: a rising figure with a bell under it. */
+  promote: () => {
+    tone(523, { type: 'sine', d: 0.22, peak: 0.3 });
+    tone(659, { type: 'sine', d: 0.22, peak: 0.28, t: 0.1 });
+    tone(880, { type: 'sine', d: 0.6, peak: 0.26, t: 0.2 });
+    tone(1760, { type: 'sine', d: 0.5, peak: 0.1, t: 0.22 });
+  },
+  /** Someone leaves: a door, falling. */
+  leave: () => {
+    tone(330, { type: 'sawtooth', d: 0.3, peak: 0.3, slide: -140 });
+    noise({ d: 0.16, peak: 0.2, hp: 100, lp: 800 });
+  },
+  /** A stratagem lands. */
+  scheme: () => {
+    tone(1480, { type: 'sine', d: 0.1, peak: 0.22 });
+    tone(1100, { type: 'triangle', d: 0.24, peak: 0.24, t: 0.05, slide: 320 });
+  },
+  /** Ground broken on a development track. */
+  build: () => {
+    noise({ d: 0.2, peak: 0.3, hp: 200, lp: 1600 });
+    tone(240, { type: 'square', d: 0.14, peak: 0.24, slide: -50, t: 0.04 });
+  },
   drum: () => { noise({ d: 0.16, peak: 0.5, hp: 70, lp: 700 }); tone(110, { type: 'sine', d: 0.18, peak: 0.5, slide: -50 }); },
   win: () => [0, 0.14, 0.28, 0.5].forEach((t, i) => tone([523, 659, 784, 1047][i], { type: 'triangle', d: 0.4, peak: 0.3, t })),
   lose: () => [0, 0.18, 0.42].forEach((t, i) => tone([440, 370, 262][i], { type: 'sine', d: 0.6, peak: 0.3, t })),
