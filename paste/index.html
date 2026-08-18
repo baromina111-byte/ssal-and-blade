@@ -15,7 +15,7 @@ h1{font-size:22px;margin:0 0 6px;font-weight:800}
 .post{background:#fff;border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:18px}
 .post h2{font-size:17px;margin:0 0 14px;font-weight:800;line-height:1.45}
 .row{display:flex;gap:10px;flex-wrap:wrap}
-button{flex:1;min-width:130px;border:0;border-radius:10px;padding:14px 16px;
+button{flex:1 1 0;min-width:0;border:0;border-radius:10px;padding:14px 16px;
  font:600 15px Pretendard,system-ui,sans-serif;cursor:pointer;background:var(--accent);color:#fff}
 button.alt{background:var(--ink)}
 button.done{background:#6FA87A}
@@ -23,6 +23,7 @@ button:active{transform:translateY(1px)}
 a.go{display:block;text-align:center;margin-top:12px;padding:13px;border:1px solid var(--line);
  border-radius:10px;text-decoration:none;color:var(--ink);font-size:14.5px}
 pre{display:none}
+@media(max-width:380px){.row{flex-direction:column}}
 @media(prefers-color-scheme:dark){
  :root{--ink:#F5F4EF;--soft:#A9A8A2;--paper:#121211;--line:#2A2926}
  .post,.step{background:#1A1A18}
