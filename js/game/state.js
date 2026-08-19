@@ -2,7 +2,7 @@
 
 import {
   CITIES, GOODS, WEAPONS, ARMORS, UPGRADES, STAGES, RICE_SEASON,
-  SKILLS, CONSUMABLES, TRINKETS, CONTRACT_PATRONS,
+  SKILLS, CONSUMABLES, TRINKETS, CONTRACT_PATRONS, FLOWS, COVER_MONTHS, RIVALS,
 } from '../data/gamedata.js';
 import { MASTERY } from '../data/features.js';
 import { TREASURES, wornMod, MAX_WORN } from '../data/treasures.js';
@@ -105,7 +105,9 @@ export function newGame() {
     pouch: Object.fromEntries(CONSUMABLES.map((c) => [c.id, 0])),
     upgrades: Object.fromEntries(UPGRADES.map((u) => [u.id, 0])),
     threat: Object.fromEntries(CITIES.map((c) => [c.id, c.id === 'jeonju' ? 46 : 30])),
-    noise: {},                // city -> good -> multiplicative drift
+    noise: {},                // city -> good -> residual sentiment, small now
+    market: {},               // city -> good -> units on hand
+    rivals: {},               // rival id -> { purse, holding }
     mods: [],                 // active world-event price modifiers
     cleared: {},              // stage id -> true
     chapter: 1,
@@ -143,12 +145,18 @@ export function newGame() {
   });
   for (const c of CITIES) {
     S.noise[c.id] = Object.fromEntries(GOODS.map((g) => [g.id, 1]));
+    // Every town opens with a normal amount of cover, so month one reads as a
+    // working economy rather than a famine everywhere at once.
+    S.market[c.id] = Object.fromEntries(
+      GOODS.map((g) => [g.id, Math.round(coverTarget(c.id, g.id))]),
+    );
     S.dev[c.id] = Object.fromEntries(DEVELOP.map((d) => [d.id, 0]));
     // Every region starts nominally Joseon except the south coast, which the
     // Japanese held from their castles through the whole truce.
     S.holders[c.id] = c.id === 'dongnae' ? 'jp' : 'joseon';
   }
   for (const p of CONTRACT_PATRONS) S.rel[p.id] = RELATION.start;
+  for (const r of RIVALS) S.rivals[r.id] = { purse: r.purse, holding: {} };
 
   // 20. 후계. A finished campaign leaves the next one a small, permanent head
   // start -- the reason to play again rather than reload. Without reading it
@@ -406,19 +414,85 @@ export function modFactor(goodId) {
  * The price one unit trades at in a city right now. Threat adds a risk premium
  * in remote towns; the 장부술 upgrade shaves the spread you pay.
  */
+// ------------------------------------------------------------- 수급
+
+export const makes = (cityId, goodId) => (FLOWS[cityId]?.make?.[goodId]) || 0;
+export const eats = (cityId, goodId) => (FLOWS[cityId]?.eat?.[goodId]) || 0;
+
+/**
+ * How many units a town wants on hand: a few months of what it eats, plus a
+ * little of what it makes waiting to move. A town that neither makes nor eats a
+ * good still keeps a token amount, so the price is defined everywhere.
+ */
+export function coverTarget(cityId, goodId) {
+  const e = eats(cityId, goodId);
+  const m = makes(cityId, goodId);
+  // Two lessons, both learned by measuring.
+  //
+  // The floor matters more than it looks: thin goods -- ginseng at five units a
+  // month for the whole country -- carry so little buffer that a couple of units
+  // is a huge *relative* swing, and the price rode it at 5-7x.
+  //
+  // And a producing town normally sits on its own output, not just its
+  // appetite. Counting only consumption meant 전주 held "three months of the 22
+  // sacks it eats" while 138 a month piled up behind it, so the granary read as
+  // permanently glutted and its price pinned to the floor. A town's normal is
+  // what it eats *and* what it is holding to send out.
+  //
+  // A third, found by playing the calendar out: the towns that buy everything
+  // were carrying the *thinnest* buffer, which is backwards. 동래 makes no
+  // charcoal and burns eight a month, so it held 24 -- while 개성, which makes
+  // its own, held 78. Every wobble in the traffic hit 동래 as a large relative
+  // shortage and its charcoal swung 19x across a run. A town that cannot make
+  // the thing has to keep more of it, not less, exactly as a real port does.
+  const dependence = e > 0 ? clamp((e - m) / e, 0, 1) : 0;
+  const months = COVER_MONTHS * (1 + dependence);      // 3 months .. 6
+  return Math.max(14, (e + m) * months);
+}
+
+export const marketStock = (cityId, goodId) =>
+  (S.market?.[cityId]?.[goodId] ?? coverTarget(cityId, goodId));
+
+/**
+ * Scarcity: how short the town is against what it wants to hold. 1 is normal,
+ * above 1 is dear, below 1 is glutted. The exponent keeps a total shortage from
+ * running away to an absurd multiple.
+ */
+export function scarcity(cityId, goodId) {
+  const want = coverTarget(cityId, goodId);
+  const have = Math.max(0.5, marketStock(cityId, goodId));
+  // The exponent and clamp are the whole feel of the market. At 0.62 and a 3x
+  // ceiling, charcoal swung 12.8x across two years and salt 9x -- a market
+  // nobody could plan against. Half-power with a 2.1x ceiling still makes a
+  // shortage hurt and a glut worth avoiding, but keeps a season's range inside
+  // roughly 2-3x once season and events are layered on top.
+  return clamp((want / have) ** 0.5, 0.5, 2.1);
+}
+
+/** Move a town's stock, the only way a price is allowed to change by trade. */
+export function moveStock(cityId, goodId, delta) {
+  if (!S.market[cityId]) S.market[cityId] = {};
+  const cur = marketStock(cityId, goodId);
+  S.market[cityId][goodId] = Math.max(0, cur + delta);
+}
+
 export function priceOf(cityId, goodId) {
   const c = city(cityId);
   const g = good(goodId);
   if (!c || !g) return 0;
   const season = seasonFactor(goodId, monthIndex());
   const risk = 1 + (S.threat[cityId] || 0) / 100 * 0.12;
-  const n = (S.noise[cityId] && S.noise[cityId][goodId]) || 1;
+  // Sentiment still exists, but it is now a nudge on top of a real shortage
+  // rather than the whole explanation for a price.
+  const n = 1 + (((S.noise[cityId] && S.noise[cityId][goodId]) || 1) - 1) * 0.35;
+  const short = scarcity(cityId, goodId);
   // 9 + 19. What the town itself does to the price: development is the payoff
   // for settling somewhere, and a region held by someone else carries a premium.
   const local = 1 + (heldBy(cityId) === 'joseon' ? 0 : 0.18)
     - (goodId === 'rice' ? devLevel(cityId, 'farm') * 0.04 : 0);
   return Math.max(1, Math.round(
-    g.base * c.demand * season * modFactor(goodId) * n * risk * Math.max(0.4, local),
+    g.base * c.demand * season * modFactor(goodId) * n * risk * short
+      * Math.max(0.4, local),
   ));
 }
 
@@ -440,11 +514,21 @@ export const sellPrice = (cityId, goodId) =>
       + perks().sell)));
 
 /** Trading against a thin market moves it: buying lifts, selling depresses. */
+/**
+ * Trading against a town moves its actual stock, which is what moves the price.
+ *
+ * This used to nudge an abstract noise term. Now buying takes units off the
+ * town's shelves and selling puts them back, so a big enough haul visibly
+ * drains a granary or floods a market -- and the arbitrage you were running
+ * closes behind you. The small sentiment shift stays on top as the froth of a
+ * rumoured big buyer.
+ */
 export function applyImpact(cityId, goodId, qty) {
+  moveStock(cityId, goodId, -qty);
   const g = good(goodId);
-  const shift = qty / g.depth * 0.55;
+  const shift = qty / g.depth * 0.22;
   const n = S.noise[cityId][goodId];
-  S.noise[cityId][goodId] = clamp(n * (1 + shift), 0.45, 2.6);
+  S.noise[cityId][goodId] = clamp(n * (1 + shift), 0.6, 1.8);
 }
 
 // ----------------------------------------------------------------- save

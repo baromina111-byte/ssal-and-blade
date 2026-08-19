@@ -973,3 +973,76 @@ export const EXTRA_EVENTS = [
 ];
 
 ALL_EVENTS.push(...EXTRA_EVENTS);
+
+// ------------------------------------------------------- 수급 · supply
+
+/**
+ * What each town makes and eats, in units per month.
+ *
+ * Prices used to be a mean-reverting random walk: a number that wobbled for no
+ * reason a player could name, so "buy low, sell high" meant "buy where the dice
+ * were kind". Giving every town a production and a consumption line turns the
+ * map into an argument -- 전주 grows rice and 한양 eats it, so the rice road runs
+ * north, and it keeps paying only while the gap is open. Close it by hauling
+ * enough and the margin closes with it, which is the actual lesson of trade.
+ *
+ * `make` is produced each month, `eat` is consumed. The difference decides
+ * whether a town is a source or a sink, and by how much.
+ */
+export const FLOWS = {
+  hanyang: {
+    // The capital: makes fine goods under state workshops, eats everything.
+    make: { silk: 6, porcelain: 5, paper: 7 },
+    eat: { rice: 46, salt: 16, charcoal: 22, herb: 7, tobacco: 8, fur: 3,
+      ginseng: 2, silk: 3, porcelain: 2, paper: 4 },
+  },
+  gaeseong: {
+    // 송상 country: ginseng beds and paper mills, and a merchant's appetite.
+    make: { ginseng: 6, paper: 9, herb: 7, tobacco: 10, charcoal: 14 },
+    eat: { rice: 24, salt: 9, charcoal: 12, silk: 3, porcelain: 2,
+      tobacco: 5, fur: 2 },
+  },
+  jeonju: {
+    // The granary of the south. Rice runs out of here in every direction.
+    make: { rice: 138, paper: 5, tobacco: 13, herb: 4, charcoal: 12 },
+    eat: { salt: 11, charcoal: 9, herb: 3, silk: 1, porcelain: 1, fur: 1,
+      rice: 22 },
+  },
+  pyongyang: {
+    // The northern gate: charcoal from the hills, fur over the border.
+    make: { charcoal: 31, fur: 7, herb: 6, rice: 17 },
+    eat: { rice: 26, salt: 9, silk: 2, porcelain: 1, paper: 3, tobacco: 4 },
+  },
+  dongnae: {
+    // Salt pans, and whatever the 왜관 lands that month.
+    make: { salt: 50, porcelain: 5, silk: 4, fur: 4 },
+    eat: { rice: 22, charcoal: 8, herb: 3, ginseng: 3, paper: 3, tobacco: 3,
+      fur: 2 },
+  },
+};
+
+// The country as a whole must make slightly more than it eats, or every price
+// climbs forever and the map turns into one long famine. tools/audit.mjs
+// enforces the margin so a future edit to one town cannot quietly starve a good.
+/** Months of cover a town tries to hold. Stock below this is dear. */
+export const COVER_MONTHS = 3;
+
+/**
+ * Rival houses.
+ *
+ * Without them the market only ever moves because of you, which is why a lone
+ * trader could corner rice for two years and never be answered. These run the
+ * same arbitrage you do, on their own money, and they take contracts off the
+ * table when their relations are better than yours.
+ */
+export const RIVALS = [
+  { id: 'songsang', name: '송상 도가', home: 'gaeseong', purse: 9000,
+    nerve: 0.9, favours: ['ginseng', 'paper', 'silk'],
+    blurb: '개성 상인. 장부가 두껍고 발이 넓다.' },
+  { id: 'gyeonggang', name: '경강 선상', home: 'hanyang', purse: 7200,
+    nerve: 1.15, favours: ['rice', 'salt', 'charcoal'],
+    blurb: '한강 배를 쥔 자들. 물량으로 밀어붙인다.' },
+  { id: 'naesang', name: '내상', home: 'dongnae', purse: 6400,
+    nerve: 1.0, favours: ['silk', 'porcelain', 'fur'],
+    blurb: '동래 왜관과 붙어 산다. 은이 마르지 않는다.' },
+];

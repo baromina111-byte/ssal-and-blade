@@ -1,7 +1,7 @@
 // Turn resolution: market drift, world events, travel risk, upkeep, endings.
 
 import {
-  CITIES, GOODS, UPGRADES, AMBUSHES, CONTRACT_PATRONS, WEAPONS,
+  CITIES, GOODS, UPGRADES, AMBUSHES, CONTRACT_PATRONS, RIVALS, RICE_SEASON, WEAPONS,
 } from '../data/gamedata.js';
 import { ALL_EVENTS } from '../data/events.js';
 import { DEEDS, TITLES, CREW, PERKS } from '../data/features.js';
@@ -14,6 +14,7 @@ import {
   S, city, good, capacity, stored, buyPrice, sellPrice, applyImpact, priceOf,
   stockValue,
   addLog, addThreat, addRep, netWorth, upLevel, trinketMod, diff, logPrices,
+  makes, eats, marketStock, moveStock, coverTarget, scarcity, monthIndex,
   treasureMod, officer, bestStat, devLevel, relation, relationTier,
   res, addRes, spendRes, rank, perks, writeLegacy, heldBy,
   readCareer, bankCareer, ownsWeapon, masteredCount,
@@ -218,13 +219,95 @@ function expireContracts() {
 
 // ---------------------------------------------------------- month turn
 
+/**
+ * The month's supply and demand.
+ *
+ * Fields are harvested, kilns are fired, and every town eats. What is left over
+ * is the stock the price is read from -- so a granary that nobody hauls from
+ * gluts and goes cheap, and a capital nobody supplies runs short and goes dear,
+ * without a single random number deciding it.
+ *
+ * A harvest month multiplies what the fields give, which is why rice is worth
+ * holding from autumn to spring rather than because a table says so.
+ */
+function produceAndConsume() {
+  const mIdx = monthIndex();
+  for (const c of CITIES) {
+    for (const g of GOODS) {
+      const made = makes(c.id, g.id);
+      const ate = eats(c.id, g.id);
+      if (!made && !ate) continue;
+
+      // Harvest weighting: RICE_SEASON is a price curve, so its inverse is
+      // roughly when the crop actually lands.
+      const harvest = g.id === 'rice' ? clamp(1.6 / RICE_SEASON[mIdx], 0.5, 2.1) : 1;
+      // 개간 raises what the fields yield here, which is the point of paying for it.
+      const farmed = 1 + (g.id === 'rice' ? devLevel(c.id, 'farm') * 0.08 : 0);
+      // A town held by someone else is being requisitioned, not traded with.
+      const taken = heldBy(c.id) === 'joseon' ? 1 : 1.25;
+
+      const delta = made * harvest * farmed * rand(0.92, 1.08)
+        - ate * taken * rand(0.94, 1.06);
+      moveStock(c.id, g.id, delta);
+
+      // The rest of Joseon.
+      //
+      // Only five towns are simulated, but the country around them also buys
+      // surplus and supplies shortage. Without that counterparty a granary
+      // accumulates without bound -- 전주 nets +116 sacks a month and nothing
+      // else removed them -- and the price pinned itself to the clamp. A gentle
+      // pull toward normal cover bounds both the glut and the famine while
+      // leaving plenty of room for events, seasons and the player to matter.
+      const want = coverTarget(c.id, g.id);
+      const have = marketStock(c.id, g.id);
+      moveStock(c.id, g.id, (want - have) * 0.22);
+    }
+  }
+}
+
+/**
+ * Everyone else's carts.
+ *
+ * A market with only one trader in it can be cornered and stays cornered. Each
+ * month the ordinary traffic of the country moves a slice of every good from
+ * wherever it is cheapest to wherever it is dearest, which closes gaps slowly
+ * on its own -- fast enough that sitting on a route stops paying, slow enough
+ * that spotting one first is still worth the trip.
+ */
+function ordinaryTraffic() {
+  for (const g of GOODS) {
+    const open = CITIES.filter((c) => S.chapter >= c.unlock);
+    if (open.length < 2) continue;
+    const sorted = [...open].sort((a, b) => priceOf(a.id, g.id) - priceOf(b.id, g.id));
+    const from = sorted[0];
+    const to = sorted[sorted.length - 1];
+    const gap = priceOf(to.id, g.id) / Math.max(1, priceOf(from.id, g.id));
+    if (gap < 1.25) continue;                 // not worth anyone's cart
+    const have = marketStock(from.id, g.id);
+    // Gentle: hauling too hard each month made every price oscillate as the
+    // country over-corrected, which is worse to plan against than a slow gap.
+    const move = Math.min(have * 0.07, g.depth * 0.1) * clamp(gap - 1, 0, 1.2);
+    if (move < 1) continue;
+    moveStock(from.id, g.id, -move);
+    moveStock(to.id, g.id, move);
+  }
+}
+
+/**
+ * Sentiment still drifts, but it is froth on the water now, not the tide.
+ *
+ * Kept deliberately small. The seasons are the part of the market a player can
+ * actually learn -- rice dear in spring, cheap after the harvest -- and with a
+ * louder random term the year-on-year correlation fell to 0.52, which is not
+ * enough of a pattern to plan a granary around. Quieting the noise is what makes
+ * "읽고 사둔다" a strategy rather than a hunch.
+ */
 function driftPrices() {
   for (const c of CITIES) {
     for (const g of GOODS) {
       const n = S.noise[c.id][g.id];
-      // Mean-reverting random walk: shocks fade, nothing drifts forever.
-      const reverted = 1 + (n - 1) * 0.62;
-      S.noise[c.id][g.id] = clamp(reverted * (1 + rand(-g.vol, g.vol) * 0.55), 0.5, 2.4);
+      const reverted = 1 + (n - 1) * 0.5;
+      S.noise[c.id][g.id] = clamp(reverted * (1 + rand(-g.vol, g.vol) * 0.16), 0.78, 1.3);
     }
   }
 }
@@ -690,6 +773,9 @@ export function endMonth() {
     S.rel[p.id] = clamp((S.rel[p.id] || 0) - 1.2 * (diff().relation ?? 1), 0, 100);
   }
   ageMods();
+  produceAndConsume();
+  ordinaryTraffic();
+  runRivals();
   driftPrices();
   creepThreat();
   S.month += 1;
@@ -1127,4 +1213,91 @@ export function makeLegacy() {
     ending: S.ended,
     at: S.month,
   };
+}
+
+// ---------------------------------------------------------- 경쟁 상단
+
+/**
+ * Three rival houses, trading on their own account.
+ *
+ * The market had exactly one merchant in it, so nothing you did was ever
+ * answered: corner a good and it stayed cornered for two years. These run the
+ * same loop the player does -- look for the widest gap in the goods they know,
+ * buy at the cheap end, carry, sell at the dear end -- with their own purse and
+ * their own nerve. Their carts move real stock, so a route you are working gets
+ * crowded, and a shortage you are profiting from attracts company.
+ */
+export function runRivals() {
+  S.rivals = S.rivals || {};
+  const open = CITIES.filter((c) => S.chapter >= c.unlock);
+  if (open.length < 2) return [];
+
+  const moves = [];
+  for (const r of RIVALS) {
+    const st = S.rivals[r.id] || (S.rivals[r.id] = { purse: r.purse, holding: {} });
+
+    // A house has a household, and a big house has a big one.
+    //
+    // A flat drain was wrong in both directions: it bankrupted the small houses
+    // to the floor while the largest still compounded past 250,000. Charging a
+    // share of what they are worth keeps all three alive and in the same league
+    // as the player's 50,000 goal, which is the only way the standings mean
+    // anything.
+    const worth = rivalWorth(r.id) || r.purse;
+    st.purse = Math.max(1200, Math.round(st.purse - worth * 0.11));
+
+    // Sell anything carried, wherever it is now dearest.
+    for (const [gid, qty] of Object.entries(st.holding || {})) {
+      if (!qty) continue;
+      const best = [...open].sort((a, b) => priceOf(b.id, gid) - priceOf(a.id, gid))[0];
+      st.purse += Math.round(priceOf(best.id, gid) * qty * 0.94);
+      moveStock(best.id, gid, qty);
+      st.holding[gid] = 0;
+      moves.push({ who: r.name, good: gid, at: best.id, qty, dir: 'sell' });
+    }
+
+    // Then find this month's trade among the goods this house deals in.
+    let bestGap = 1.18, pick = null;
+    for (const gid of r.favours) {
+      const sorted = [...open].sort((a, b) => priceOf(a.id, gid) - priceOf(b.id, gid));
+      const lo = sorted[0]; const hi = sorted[sorted.length - 1];
+      const gap = priceOf(hi.id, gid) / Math.max(1, priceOf(lo.id, gid));
+      if (gap > bestGap) { bestGap = gap; pick = { gid, lo, hi }; }
+    }
+    if (!pick) continue;
+
+    const unit = priceOf(pick.lo.id, pick.gid);
+    const afford = Math.floor((st.purse * 0.3 * r.nerve) / Math.max(1, unit));
+    const onHand = Math.floor(marketStock(pick.lo.id, pick.gid) * 0.25);
+    const qty = Math.max(0, Math.min(afford, onHand));
+    if (qty < 2) continue;
+
+    st.purse -= unit * qty;
+    st.holding[pick.gid] = (st.holding[pick.gid] || 0) + qty;
+    moveStock(pick.lo.id, pick.gid, -qty);
+    moves.push({ who: r.name, good: pick.gid, at: pick.lo.id, qty, dir: 'buy' });
+  }
+
+  S.rivalMoves = moves;
+  // The loudest one is worth a line in the ledger: it is the player's only
+  // warning that a route is getting crowded.
+  const big = [...moves].sort((a, b) => b.qty - a.qty)[0];
+  if (big) {
+    addLog(`${big.who}이(가) ${city(big.at).name}에서 ${good(big.good).name} `
+      + `${Math.round(big.qty)}${good(big.good).unit}을 ${big.dir === 'buy' ? '쓸어갔다' : '풀었다'}.`,
+    'info');
+  }
+  return moves;
+}
+
+/** Net worth of a rival, for the standings table. */
+export function rivalWorth(id) {
+  const r = RIVALS.find((x) => x.id === id);
+  const st = S.rivals?.[id];
+  if (!r || !st) return 0;
+  let v = st.purse;
+  for (const [gid, qty] of Object.entries(st.holding || {})) {
+    v += priceOf(r.home, gid) * (qty || 0);
+  }
+  return Math.round(v);
 }

@@ -8,7 +8,7 @@ import {
   text, panel, roundRect, won, clamp, drawSprite, wrapText, chance,
 } from '../core/util.js';
 import {
-  CITIES, GOODS, UPGRADES, WEAPONS, ARMORS, STAGES, ENEMIES,
+  CITIES, GOODS, UPGRADES, WEAPONS, ARMORS, STAGES, ENEMIES, RIVALS,
   SKILLS, CONSUMABLES, TRINKETS, ENDINGS, ENDING_ORDER,
   CONTRACT_PATRONS,
 } from '../data/gamedata.js';
@@ -24,11 +24,13 @@ import {
   monthLabel, upLevel, cityUnlocked, weapon, armor, playerMaxHp, stockValue,
   addLog, GOAL_WORTH, MAX_MONTHS, equippedSkills, masteryProgress, ownsWeapon,
   rank, perks, officer, bestStat, devLevel, relation, relationTier, res, heldBy,
+  marketStock, coverTarget, makes, eats,
   addRep,
 } from '../game/state.js';
 import {
   buy, sell, maxBuyable, travel, travelCost, ambushChance, buyUpgrade,
   upgradeCost, borrow, repay, acceptContract, deliverContract, contractReady,
+  rivalWorth,
   hireCrew, dismissCrew, crewWages, buyPerk, branchDepth, availableTitles, maxCrew,
   advice,
   shareSpoils, swearOath, searchTalent, trainOfficer, develop, developCost,
@@ -299,6 +301,7 @@ export class Hub {
     panel(ctx, 24, top, 340, 336);
     text(ctx, `${city().name} 시세`, 40, top + 24, { size: 15, weight: 800, color: '#f0dfb4' });
     text(ctx, city().blurb, 40, top + 42, { size: 11, color: '#8d8069', max: 300 });
+    text(ctx, '재고 / 월 수급', 196, top + 42, { size: 9, color: '#6d6455' });
 
     GOODS.forEach((g, i) => {
       const y = top + 54 + i * 28;
@@ -320,6 +323,30 @@ export class Hub {
       const p = priceOf(S.city, g.id);
       const dev = p / g.base - 1;
       const col = dev > 0.12 ? '#e0806a' : dev < -0.12 ? '#7fc98f' : '#d8c69c';
+
+      // Supply at a glance. The price is now a consequence of this number, so
+      // showing only the price would hide the whole reason it moved: a bar
+      // shorter than the tick means the town is short and dearer than usual.
+      const have = marketStock(S.city, g.id);
+      const want = coverTarget(S.city, g.id);
+      const fill = clamp(have / (want * 1.6), 0, 1);
+      const BW = 44, bx = 196;
+      ctx.fillStyle = 'rgba(0,0,0,.45)';
+      roundRect(ctx, bx, y + 11, BW, 5, 2.5); ctx.fill();
+      ctx.fillStyle = have < want * 0.6 ? '#e0806a'
+        : have > want * 1.4 ? '#7fc98f' : '#c8892f';
+      roundRect(ctx, bx, y + 11, BW * fill, 5, 2.5); ctx.fill();
+      // The tick marks "normal cover", so the eye reads short-or-glutted.
+      ctx.fillStyle = 'rgba(240,223,180,.7)';
+      ctx.fillRect(bx + BW * (1 / 1.6), y + 9, 1, 9);
+
+      // Net flow: is this town a source or a sink for this good?
+      const net = makes(S.city, g.id) - eats(S.city, g.id);
+      if (net) {
+        text(ctx, net > 0 ? `+${Math.round(net)}` : `${Math.round(net)}`,
+          252, y + 18, { size: 10, color: net > 0 ? '#7fc98f' : '#8d8069' });
+      }
+
       text(ctx, `${won(p)}냥`, 300, y + 18, { size: 13, weight: 700, color: col, align: 'right' });
       text(ctx, dev >= 0 ? `▲${Math.round(dev * 100)}` : `▼${Math.round(-dev * 100)}`,
         348, y + 18, { size: 10, color: col, align: 'right' });
@@ -1655,7 +1682,34 @@ export class Hub {
       });
     }
     text(ctx, '장부', 44, top + 26, { size: 16, weight: 800, color: '#f0dfb4' });
-    logList(ctx, 44, top + 40, 520, S.log, 14);
+    logList(ctx, 44, top + 40, 520, S.log, 11);
+
+    // 경쟁 상단 standings. The rivals move real stock every month; without a
+    // scoreboard the player only ever meets them as a line in the log and never
+    // knows whether they are winning.
+    const mine = Math.round(netWorth());
+    const board = [
+      { name: '우리 상단', worth: mine, us: true },
+      ...RIVALS.map((r) => ({ name: r.name, worth: rivalWorth(r.id) })),
+    ].sort((a, b) => b.worth - a.worth);
+    text(ctx, '팔도 상단 순위', 44, top + 268, { size: 12, weight: 800, color: '#d8c69c' });
+    board.forEach((b, i) => {
+      const y = top + 288 + i * 16;
+      text(ctx, `${i + 1}`, 46, y, { size: 10, color: '#6d6455' });
+      text(ctx, b.name, 62, y, {
+        size: 11, weight: b.us ? 800 : 400, color: b.us ? '#e0b455' : '#a39373',
+      });
+      text(ctx, `${won(b.worth)}냥`, 300, y, {
+        size: 11, weight: b.us ? 800 : 400,
+        color: b.us ? '#e0b455' : '#8d8069', align: 'right',
+      });
+      // What they did with their carts this month.
+      const mv = (S.rivalMoves || []).find((m) => m.who === b.name && m.dir === 'buy');
+      if (mv) {
+        text(ctx, `${city(mv.at).name}에서 ${good(mv.good).name} 매집`, 320, y,
+          { size: 9, color: '#6d6455' });
+      }
+    });
 
     panel(ctx, 596, top, 340, 336);
     text(ctx, '자금 운용', 616, top + 26, { size: 16, weight: 800, color: '#f0dfb4' });
