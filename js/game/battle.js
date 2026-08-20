@@ -16,7 +16,7 @@ import {
   ENEMIES, ALLIES, CONSUMABLES, BOSS_MOVES, OBJECTIVES, ELITES, WEATHER, FOREGROUND,
 } from '../data/gamedata.js';
 import { MASTERY } from '../data/features.js';
-import { inSwing, inCollide, sameLane, LANE, LANE_SHOT } from './hit.js';
+import { inSwing, inCollide, sameLane, liftGap, LANE, LANE_SHOT } from './hit.js';
 import { PROVISION, STRATAGEMS, DUEL } from '../data/rtk.js';
 import {
   S, weapon, armor, playerMaxHp, upLevel, equippedSkills, attackMul, trinketMod, diff,
@@ -3051,13 +3051,26 @@ export class Battle {
     live.forEach((e, i) => { e.engaged = i < slots; });
   }
 
-  /** Keep bodies from stacking into one pixel column. */
+  /**
+   * Keep bodies from stacking into one pixel column -- but only bodies that are
+   * actually in the same place.
+   *
+   * This used to test screen y, which stopped meaning "same place" the moment
+   * the floor gained depth: the whole depth range is 62px tall and the test
+   * allowed 90, so two fighters standing on opposite ranks shoved each other
+   * sideways as if they were toe to toe. Ranks only read as ranks if you can
+   * walk behind someone.
+   *
+   * The tolerance is the same LANE the hit tests use, so the rule stays one
+   * rule: if you can reach each other, you can bump into each other.
+   */
   separate() {
     const all = [this.player, ...this.allies, ...this.enemies].filter((a) => !a.dead);
     for (let i = 0; i < all.length; i++) {
       for (let j = i + 1; j < all.length; j++) {
         const a = all[i], b = all[j];
-        if (Math.abs(a.y - b.y) > 90) continue;
+        if (!sameLane(a, b)) continue;
+        if (Math.abs(liftGap(a, b)) > 90) continue;
         const d = b.x - a.x;
         // Must stay below every melee engage range (see SEPARATION in the
         // enemy AI) or bodies shove each other out of reach forever.
@@ -3245,8 +3258,11 @@ export class Battle {
     }
 
     // ---- rebinding. Click a key, then press the one you want.
+    // 줄 이동이 빠져 있었다. 깊이가 회피인 게임에서 회피 키만 바꿀 수 없고
+    // 어디에도 적혀 있지 않았다.
     const ACTIONS = [['attack', '공격'], ['guard', '방어'], ['dash', '대시'],
-      ['jump', '점프'], ['left', '왼쪽'], ['right', '오른쪽']];
+      ['jump', '점프'], ['left', '왼쪽'], ['right', '오른쪽'],
+      ['up', '뒷줄'], ['down', '앞줄']];
     if (this.rebinding) {
       const code = lastPressedCode();
       if (code && code !== 'Escape') {
@@ -3256,8 +3272,8 @@ export class Battle {
         this.rebinding = null;
       }
     }
-    // Six bindings plus a reset, laid out from a single pitch so they cannot
-    // overlap: 7 slots of 76px with 4px gaps, centred.
+    // Eight bindings plus a reset, laid out from a single pitch so they cannot
+    // overlap: 9 slots of 76px with 4px gaps, centred.
     const PITCH = 80, BW = 76;
     const rowW = PITCH * (ACTIONS.length + 1) - (PITCH - BW);
     const rx = (W - rowW) / 2;
@@ -3275,8 +3291,8 @@ export class Battle {
     }
 
     text(ctx,
-      `이동 ${keyLabel.move} · 점프 ${keyLabel.jump} · 공격 ${keyLabel.attack}`
-      + ` · 방어 ${keyLabel.guard} · 대시 ${keyLabel.dash}`,
+      `이동 ${keyLabel.move} · 줄 ${keyLabel.depth} · 점프 ${keyLabel.jump}`
+      + ` · 공격 ${keyLabel.attack} · 방어 ${keyLabel.guard} · 대시 ${keyLabel.dash}`,
       W / 2, H - 24, { size: 12, align: 'center', color: '#9d8e70' });
   }
 
@@ -3669,7 +3685,7 @@ export class Battle {
     if (this.t < 7 && this.state === 'fight' && !S.stats.battles && !this.paused) {
       const keys = TOUCH
         ? '공격을 세 번 이어치면 강타 · 적의 붉은 예비동작에 맞춰 방어하면 반격'
-        : `이동 ${keyLabel.move} · 점프 ${keyLabel.jump} · 공격 ${keyLabel.attack}(3연타, 꾹 누르면 강타)`
+        : `이동 ${keyLabel.move} · 줄 이동 ${keyLabel.depth}(피하기) · 점프 ${keyLabel.jump} · 공격 ${keyLabel.attack}(3연타, 꾹 누르면 강타)`
           + ` · 방어 ${keyLabel.guard}(타이밍 맞추면 반격) · 대시 ${keyLabel.dash}`;
       panel(ctx, W / 2 - 300, H - 34, 600, 26, { fill: 'rgba(16,13,9,.72)', stroke: null });
       text(ctx, keys, W / 2, H - 16, { size: 12, align: 'center', color: '#cbb992' });

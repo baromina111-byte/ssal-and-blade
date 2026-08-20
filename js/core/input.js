@@ -168,11 +168,12 @@ export function codeLabel(code) {
 
 /** Human-readable label for a binding, for on-screen hints. */
 export const keyLabel = {
-  move: '←→', jump: 'W', attack: 'A', guard: 'S', dash: 'D', pause: 'Esc',
+  move: '←→', depth: '↑↓', jump: 'W', attack: 'A', guard: 'S', dash: 'D', pause: 'Esc',
 };
 
 function refreshLabels() {
   keyLabel.move = `${codeLabel(KEYS.left[0])}${codeLabel(KEYS.right[0])}`;
+  keyLabel.depth = `${codeLabel(KEYS.up[0])}${codeLabel(KEYS.down[0])}`;
   keyLabel.jump = codeLabel(KEYS.jump[0]);
   keyLabel.attack = codeLabel(KEYS.attack[0]);
   keyLabel.guard = codeLabel(KEYS.guard[0]);

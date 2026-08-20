@@ -85,7 +85,25 @@ html, body {
   pointer-events: none;
 }
 #touch[hidden] { display: none; }
-#touch .pad, #touch .acts { display: flex; gap: 6px; pointer-events: auto; }
+#touch .acts { display: flex; gap: 6px; pointer-events: auto; }
+/* A full cross, not a left/right pair.
+   The arena is fought on a floor with depth and stepping between ranks is the
+   universal dodge, so a pad without up and down does not just lose a movement
+   option -- it takes the dodge away and leaves depth as pure disadvantage. On
+   a 추격 it can strand the mark on a rank the player cannot walk to. */
+#touch .pad {
+  display: grid;
+  grid-template-columns: repeat(3, 46px);
+  grid-template-rows: repeat(3, 46px);
+  gap: 6px;
+  pointer-events: auto;
+}
+#touch .pad button { width: 46px; height: 46px; }
+#touch .pad .u { grid-area: 1 / 2; }
+#touch .pad .l { grid-area: 2 / 1; }
+#touch .pad .r { grid-area: 2 / 3; }
+#touch .pad .d { grid-area: 3 / 2; }
+#touch .pad .u, #touch .pad .d { border-color: rgba(140, 190, 220, .45); }
 /* Attack sits nearest the thumb, so the row is laid out from the right. */
 #touch .acts { flex-direction: row-reverse; }
 #touch button {
