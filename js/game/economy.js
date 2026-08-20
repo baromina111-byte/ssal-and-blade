@@ -23,6 +23,7 @@ import {
 } from './state.js';
 import { clamp, rand, chance, pick, won } from '../core/util.js';
 import { sfx } from '../core/audio.js';
+import { setFlag } from './story.js';
 
 // ------------------------------------------------------------- trading
 
@@ -931,6 +932,10 @@ export function driftLoyalty() {
   if (gone.length) {
     addLog(`${gone.join(', ')}이(가) 상단을 떠났다.`, 'bad');
     sfx.leave();
+    // Losing someone is a story beat, not just a line in the ledger. The
+    // interlude that waits on this flag asks what kind of send-off he gives.
+    setFlag('lost_a_man');
+    bump('crewLost', gone.length);
   }
   return gone;
 }

@@ -19,6 +19,8 @@ import {
   STATS, grade, LOYALTY, RANKS, DEVELOP, STRATAGEMS, RESOURCES, HOLDERS,
   SEARCH, TRAIN, SCOUT, TRIBUTE, PATROL, PROVISION, DUEL,
 } from '../data/rtk.js';
+import { selfPortrait, flag } from '../game/story.js';
+import { NPC_NAMES, BOND_WORDS, MEMOIRS } from '../data/memoirs.js';
 import {
   S, city, good, capacity, stored, buyPrice, sellPrice, priceOf, netWorth,
   monthLabel, upLevel, cityUnlocked, weapon, armor, playerMaxHp, stockValue,
@@ -99,13 +101,17 @@ function weaponSigil(ctx, wp, cx, cy, alpha = 1) {
 
 const W = 960, H = 540;
 const TABS = ['저잣거리', '계약', '상단', '무구', '무예', '보패', '사람',
-  '경략', '팔도', '출정', '공적', '장부'];
+  '경략', '팔도', '출정', '사람됨', '공적', '장부'];
 // Painted per screen now, and reached through ui/ rather than bg/, so the
 // management half stops looking like a battlefield with a form over it.
 const TAB_BG = ['ui/hub_market', 'ui/hub_office', 'ui/hub_warehouse',
   'ui/hub_warroom', 'ui/hub_warroom', 'ui/hub_vault', 'ui/hub_yard',
-  'ui/hub_warroom', 'ui/map_joseon', 'ui/hub_warroom', 'ui/hub_office',
+  'ui/hub_warroom', 'ui/map_joseon', 'ui/hub_warroom', 'ui/hub_yard',
+  'ui/hub_office',
   'ui/hub_office'];
+
+/** How many screens the hub has. Read by tools/test-ui.mjs. */
+export const TAB_COUNT = TABS.length;
 
 export class Hub {
   /** @param {{onBattle:Function, onEndMonth:Function}} hooks */
@@ -181,8 +187,9 @@ export class Hub {
       case 7: this.drawStatecraft(ctx); break;
       case 8: this.drawMap(ctx); break;
       case 9: this.drawSortie(ctx); break;
-      case 10: this.drawDeeds(ctx); break;
-      case 11: this.drawLedger(ctx); break;
+      case 10: this.drawSelf(ctx); break;
+      case 11: this.drawDeeds(ctx); break;
+      case 12: this.drawLedger(ctx); break;
     }
     this.drawFooter(ctx);
 
@@ -1305,6 +1312,111 @@ export class Hub {
         } else this.say('돈이 모자란다', true);
       }
     });
+  }
+
+
+  // ------------------------------------------------------- 사람됨
+
+  /**
+   * Who this man has become.
+   *
+   * The six 기질 axes move with almost every answer he gives, and several
+   * doors in the story will not open without them -- so they have to be
+   * visible, or the player is choosing blind. The right column is the record:
+   * who he knows, and the decisions the world is still holding against him.
+   */
+  drawSelf(ctx) {
+    const top = 118;
+    const me = selfPortrait();
+
+    panel(ctx, 24, top, 470, 336);
+    text(ctx, '기질', 44, top + 24, { size: 15, weight: 800, color: '#f0dfb4' });
+    if (me.repute) {
+      text(ctx, me.repute.name, 120, top + 24, {
+        size: 13, weight: 700, color: me.repute.ill ? '#e0806a' : '#e0b455',
+      });
+      text(ctx, me.repute.desc, 44, top + 42, { size: 10, color: '#8d8069', max: 420 });
+    } else {
+      text(ctx, '아직 세상이 그를 부르는 이름이 없다.', 44, top + 42,
+        { size: 10, color: '#6d6455' });
+    }
+
+    me.traits.forEach((t, i) => {
+      const y = top + 66 + i * 44;
+      text(ctx, t.hanja, 50, y + 18, { size: 20, weight: 800, color: t.color });
+      text(ctx, t.name, 78, y + 12, { size: 13, weight: 700, color: '#f0dfb4' });
+      text(ctx, t.desc, 78, y + 28, { size: 10, color: '#7d7159', max: 300 });
+
+      // A two-sided bar: virtue right of centre, its absence to the left.
+      const BW = 120, bx = 348, mid = bx + BW / 2;
+      ctx.fillStyle = 'rgba(0,0,0,.45)';
+      roundRect(ctx, bx, y + 8, BW, 6, 3); ctx.fill();
+      const k = clamp(t.v / 30, -1, 1);
+      ctx.fillStyle = k < 0 ? '#e0806a' : t.color;
+      const w = Math.abs(k) * (BW / 2);
+      ctx.fillRect(k < 0 ? mid - w : mid, y + 8, w, 6);
+      ctx.fillStyle = 'rgba(240,223,180,.8)';
+      ctx.fillRect(mid, y + 6, 1, 10);
+      text(ctx, t.band.t, 478, y + 14,
+        { size: 10, align: 'right', color: t.band.k > 0 ? t.color : '#8d8069' });
+    });
+
+    // ---- the people
+    panel(ctx, 506, top, 430, 160);
+    text(ctx, '인연', 526, top + 24, { size: 15, weight: 800, color: '#f0dfb4' });
+    const known = me.bonds.sort((a, b) => b[1] - a[1]).slice(0, 6);
+    if (!known.length) {
+      text(ctx, '아직 마음을 나눈 사람이 없다.', 526, top + 50,
+        { size: 11, color: '#6d6455' });
+    }
+    known.forEach(([npc, lvl], i) => {
+      const y = top + 44 + i * 19;
+      const face = img(`npc/${npc}`);
+      if (face) {
+        ctx.save();
+        ctx.beginPath(); ctx.arc(536, y + 2, 9, 0, Math.PI * 2); ctx.clip();
+        drawSprite(ctx, face, 536, y + 12, 22);
+        ctx.restore();
+      }
+      text(ctx, NPC_NAMES[npc] || npc, 552, y + 6, { size: 11, color: '#c3b18c' });
+      for (let k = 0; k < 5; k++) {
+        ctx.fillStyle = k < lvl ? '#e0b455' : 'rgba(120,104,78,.35)';
+        ctx.beginPath();
+        ctx.arc(700 + k * 14, y + 2, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      text(ctx, BOND_WORDS[Math.min(5, lvl)], 916, y + 6,
+        { size: 10, align: 'right', color: '#8d8069' });
+    });
+
+    // ---- what he did, in his own words
+    panel(ctx, 506, top + 168, 430, 168);
+    text(ctx, '지나온 결정', 526, top + 192,
+      { size: 15, weight: 800, color: '#f0dfb4' });
+    text(ctx, `${me.decisions}장면`, 916, top + 192,
+      { size: 11, align: 'right', color: '#8d8069' });
+
+    const done = MEMOIRS.filter((m) => flag(m.flag));
+    if (!done.length) {
+      text(ctx, '아직 세상에 남긴 자국이 없다.', 526, top + 218,
+        { size: 11, color: '#6d6455' });
+    }
+    this.memPage = this.memPage || 0;
+    const PER = 6;
+    const pages = Math.max(1, Math.ceil(done.length / PER));
+    this.memPage = clamp(this.memPage, 0, pages - 1);
+    done.slice(this.memPage * PER, this.memPage * PER + PER).forEach((m, i) => {
+      const y = top + 216 + i * 19;
+      ctx.fillStyle = m.dark ? '#e0806a' : '#7fc98f';
+      ctx.beginPath(); ctx.arc(532, y - 4, 3, 0, Math.PI * 2); ctx.fill();
+      text(ctx, m.text, 544, y, { size: 11, color: '#c3b18c', max: 370 });
+    });
+    if (pages > 1) {
+      if (button(ctx, { x: 526, y: top + 336 - 34, w: 70, h: 24 }, '이전',
+        { enabled: this.memPage > 0, tone: 'ghost', small: true })) this.memPage -= 1;
+      if (button(ctx, { x: 846, y: top + 336 - 34, w: 70, h: 24 }, '다음',
+        { enabled: this.memPage < pages - 1, tone: 'ghost', small: true })) this.memPage += 1;
+    }
   }
 
   // -------------------------------------------------------------- dojo

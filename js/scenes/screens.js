@@ -2,13 +2,14 @@
 
 import { img } from '../core/loader.js';
 import { sfx, playMusic, toggleMusic, toggleSfx, settings } from '../core/audio.js';
-import { pointer, anyPressed, confirmPressed } from '../core/input.js';
+import { pointer, anyPressed, confirmPressed, pressed } from '../core/input.js';
 import { button } from '../core/ui.js';
 import {
   text, panel, wrapText, clamp, won, drawSprite, easeOut, roundRect,
 } from '../core/util.js';
 import { STORY, ENDINGS, STAGES, CITIES } from '../data/gamedata.js';
 import { chooseOption, shareSpoils } from '../game/economy.js';
+import { node, optionsFor, choose, markSeen } from '../game/story.js';
 import {
   S, monthLabel, netWorth, hasSave, GOAL_WORTH, MAX_MONTHS, stored, capacity, rank,
   DIFFICULTIES,
@@ -528,5 +529,170 @@ export class BattleResult {
       text(ctx, '아무 키나 눌러 계속', W / 2, H - 60,
         { size: 13, align: 'center', color: '#9d8e70', shadow: 'rgba(0,0,0,.9)' });
     }
+  }
+}
+
+// ------------------------------------------------------------- 서사
+
+/**
+ * A branching story scene.
+ *
+ * Lines reveal one at a time and then the answers appear. Options the player
+ * cannot take are shown greyed with the reason, because a door you can see is
+ * locked tells you more about your character than one that was never drawn --
+ * "의가 모자라다" under a reply is the game telling you who you have become.
+ */
+export class StoryNode {
+  /** @param {string} id @param {Function} onDone */
+  constructor(id, onDone) {
+    this.id = id;
+    this.onDone = onDone;
+    this.t = 0;
+    this.shown = 0;          // how many lines have appeared
+    this.said = null;        // the narration after an answer
+    this.notes = [];
+    this.enter(id);
+  }
+
+  enter(id) {
+    const n = node(id);
+    this.n = n;
+    this.id = id;
+    this.t = 0;
+    this.shown = 0;
+    this.said = null;
+    this.opts = optionsFor(id);
+    if (n?.music) playMusic(n.music);
+    sfx.select();
+  }
+
+  get lines() { return this.n?.lines || []; }
+
+  update(dt) {
+    this.t += dt;
+    // Lines walk out on their own; a press skips to all of them.
+    const want = Math.min(this.lines.length, 1 + Math.floor(this.t / 1.15));
+    if (want > this.shown) this.shown = want;
+
+    if (this.said !== null) {
+      if (this.t > 0.5 && (confirmPressed() || pointer.clicked)) this.finish();
+      return;
+    }
+    if (this.shown < this.lines.length) {
+      if (confirmPressed() || pointer.clicked) this.shown = this.lines.length;
+      return;
+    }
+    // No answers to give: this is a narration beat, so any key moves on.
+    if (!this.opts.length && this.t > 0.6 && (confirmPressed() || pointer.clicked)) {
+      markSeen(this.id);
+      this.finish(node(this.id)?.next || null);
+    }
+  }
+
+  /** Take option `i`, show what it cost, and remember where it leads. */
+  pick(i) {
+    const res = choose(this.id, i);
+    this.notes = res.notes || [];
+    this.nextId = res.next;
+    this.said = res.said || '';
+    this.t = 0;
+    sfx.ui();
+  }
+
+  finish(forced) {
+    const nx = forced !== undefined ? forced : this.nextId;
+    if (nx && node(nx)) this.enter(nx);
+    else this.onDone();
+  }
+
+  draw(ctx) {
+    const n = this.n;
+    if (!n) { this.onDone(); return; }
+    drawStill(ctx, n.cut ? `cut/${n.cut}` : 'bg/village_day', this.t,
+      { darken: 0.58, zoomRate: 0.22 });
+
+    const k = easeOut(clamp(this.t / 0.5, 0, 1));
+    ctx.globalAlpha = k;
+
+    // Speaker
+    const face = n.npc ? img(`npc/${n.npc}`) : null;
+    if (face) {
+      ctx.save();
+      ctx.beginPath(); ctx.arc(120, 150, 52, 0, Math.PI * 2); ctx.clip();
+      drawSprite(ctx, face, 120, 206, 118);
+      ctx.restore();
+      ctx.strokeStyle = 'rgba(200,137,47,.7)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(120, 150, 52, 0, Math.PI * 2); ctx.stroke();
+    }
+    if (n.who) {
+      text(ctx, n.who, 120, 226, {
+        size: 15, weight: 800, align: 'center', color: '#e0b455',
+        shadow: 'rgba(0,0,0,.9)',
+      });
+    }
+
+    // The lines so far
+    const bx = 200;
+    let y = 108;
+    for (let i = 0; i < this.shown; i++) {
+      const fade = i === this.shown - 1 ? clamp((this.t % 1.15) / 0.35, 0, 1) : 1;
+      ctx.globalAlpha = k * (0.55 + fade * 0.45);
+      // wrapText returns the next absolute y, not a height. Adding it to `y`
+      // doubled the position on every line and pushed the third one behind the
+      // answer buttons.
+      y = wrapText(ctx, this.lines[i], bx, y, 700, 26, {
+        size: 16, color: '#e8dcc0', shadow: 'rgba(0,0,0,.9)',
+      }) + 8;
+    }
+    ctx.globalAlpha = k;
+
+    // The narration that follows an answer
+    if (this.said !== null) {
+      panel(ctx, 176, H - 168, 730, 96, { fill: 'rgba(12,10,7,.92)' });
+      if (this.said) {
+        wrapText(ctx, this.said, 200, H - 138, 680, 22,
+          { size: 15, color: '#c3b18c' });
+      }
+      if (this.notes.length) {
+        text(ctx, this.notes.join(' · '), 200, H - 92,
+          { size: 12, weight: 700, color: '#8fb0c8' });
+      }
+      if (Math.sin(this.t * 4) > -0.3) {
+        text(ctx, '계속', 880, H - 92,
+          { size: 12, align: 'right', color: '#8d8069' });
+      }
+      ctx.globalAlpha = 1;
+      return;
+    }
+
+    // The answers
+    if (this.shown >= this.lines.length && this.opts.length) {
+      const rows = this.opts.length;
+      const h = rows > 4 ? 34 : 40;
+      const top = H - 40 - rows * (h + 6);
+      this.opts.forEach((o, i) => {
+        const by = top + i * (h + 6);
+        if (o.locked) {
+          panel(ctx, 176, by, 730, h, {
+            fill: 'rgba(18,15,10,.72)', stroke: 'rgba(80,72,58,.5)',
+          });
+          text(ctx, o.label, 200, by + h / 2 + 5,
+            { size: 14, color: '#5d5445' });
+          text(ctx, o.why || '지금은 할 수 없다', 886, by + h / 2 + 5,
+            { size: 11, align: 'right', color: '#6d6455' });
+          return;
+        }
+        if (button(ctx, { x: 176, y: by, w: 730, h }, o.label,
+          { tone: 'primary', size: 15 })) this.pick(i);
+      });
+      // Number keys as well as clicks: five options is a lot of mousing.
+      for (let i = 0; i < this.opts.length; i++) {
+        if (pressed(`Digit${i + 1}`) && !this.opts[i].locked) this.pick(i);
+      }
+    } else if (this.shown >= this.lines.length && Math.sin(this.t * 4) > -0.3) {
+      text(ctx, '아무 키나 눌러 계속', W / 2, H - 60,
+        { size: 13, align: 'center', color: '#9d8e70' });
+    }
+    ctx.globalAlpha = 1;
   }
 }

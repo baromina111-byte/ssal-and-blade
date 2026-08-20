@@ -137,6 +137,12 @@ export function newGame() {
     intel: null,              // next month's card, if scouted
     provisions: 0,            // 섬 set aside for the next sortie
     legacy: {},               // carried in from the previous run
+
+    // ---- 서사 (the branching story)
+    flags: {},                // what he has done, read back by later scenes
+    traits: { in: 0, ui: 0, ji: 0, yong: 0, ye: 0, sin: 0 },
+    bonds: {},                // npc id -> 0..5
+    storySeen: {},            // node id -> true
     difficulty: 'normal',
     log: [],
     stats: { kills: 0, battles: 0, deaths: 0, bestDeal: 0, traded: 0 },
@@ -574,6 +580,10 @@ function migrate(data) {
   data.duelsTried = data.duelsTried || {};
   data.legacy = data.legacy || {};
   data.knownEvents = data.knownEvents || {};
+  data.flags = data.flags || {};
+  data.traits = { in: 0, ui: 0, ji: 0, yong: 0, ye: 0, sin: 0, ...(data.traits || {}) };
+  data.bonds = data.bonds || {};
+  data.storySeen = data.storySeen || {};
 
   for (const c of CITIES) {
     data.dev[c.id] = {

@@ -2232,6 +2232,19 @@ class Projectile {
   draw(ctx, cam) {
     const x = this.x - cam;
     ctx.save();
+    // Shrink with depth, exactly as a body does.
+    //
+    // A shot is bound to one rank now -- stepping off the line dodges it. That
+    // only works if the player can see which line it is on, and until this every
+    // arrow drew at full size no matter how far back it flew. The dodge existed
+    // and the cue for it did not. Scaling about the shot's own position keeps
+    // the hit point where it is and only changes how big it reads.
+    const ds = depthScale(this.z || 0);
+    if (ds !== 1) {
+      ctx.translate(x, this.y);
+      ctx.scale(ds, ds);
+      ctx.translate(-x, -this.y);
+    }
     if (this.kind === 'shock') {
       ctx.globalAlpha = clamp(1 - this.t / 1.4, 0, 1) * 0.9;
       ctx.strokeStyle = '#e0b071';
@@ -3116,7 +3129,11 @@ export class Battle {
     // alone breaks the moment bodies stand at different depths, because a
     // distant actor sits *higher* on the screen and would otherwise be drawn
     // over the one in front of it.
-    const actors = [...this.enemies, ...this.allies]
+    // Projectiles sort in with the bodies. Drawn in a flat pass afterwards, an
+    // arrow crossing the back rank painted over a fighter standing in front of
+    // it, which reads as the arrow being nearer than it is -- the opposite of
+    // what the player has to judge to dodge it.
+    const actors = [...this.enemies, ...this.allies, ...this.projectiles]
       .sort((a, b) => (b.z || 0) - (a.z || 0) || a.y - b.y || a.x - b.x);
     for (const a of actors) a.draw(ctx, this.cam);
     this.player.draw(ctx, this.cam, this.player.sprite(), this.player.drawHeight());
@@ -3151,7 +3168,6 @@ export class Battle {
       }
       ctx.restore();
     }
-    for (const p of this.projectiles) p.draw(ctx, this.cam);
     if (this.freeze) {
       const f = this.freeze;
       drawSprite(ctx, img(f.sprite), f.x - this.cam, f.y, f.h, {

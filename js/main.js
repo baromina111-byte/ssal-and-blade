@@ -18,7 +18,10 @@ import {
 import { addRes } from './game/state.js';
 import { Battle, noteFrame } from './game/battle.js';
 import { Hub } from './scenes/hub.js';
-import { Title, Story, MonthReport, Ending, BattleResult } from './scenes/screens.js';
+import {
+  Title, Story, MonthReport, Ending, BattleResult, StoryNode,
+} from './scenes/screens.js';
+import { dueNode } from './game/story.js';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d', { alpha: false });
@@ -62,13 +65,30 @@ const titleHooks = {
     rollOffers();
     markSeen(1);
     addLog('남원 땅에서 다시 시작한다.', 'info');
-    goto(() => new Story(1, () => toHub()));
+    goto(() => new Story(1, () => toHubOrStory()));
   },
   onContinue: () => { if (loadGame()) toHub(); },
 };
 
 function toTitle() {
   goto(() => new Title(titleHooks));
+}
+
+/**
+ * Back to the management screen -- unless a story beat is waiting.
+ *
+ * Every node declares its own trigger, so this is the single gate they all
+ * come through. Chapter openings, companion arcs, bond scenes and the
+ * state-triggered interludes are all just nodes that became due, and they play
+ * one after another until none is.
+ */
+function toHubOrStory() {
+  const due = dueNode();
+  if (due) {
+    goto(() => new StoryNode(due, () => toHubOrStory()));
+    return;
+  }
+  toHub();
 }
 
 function toHub() {
@@ -154,11 +174,11 @@ function onBattleDone(stage, res) {
     if (stage.final && res.win) {
       // The war is over, but the run still closes with the ledger in month 24.
       addLog('전란이 끝났다. 남은 것은 장부뿐이다.', 'good');
-      goto(() => new Story(12, () => toHub()));
+      toHubOrStory();
     } else if (nextChapter) {
-      goto(() => new Story(nextChapter, () => toHub()));
+      goto(() => new Story(nextChapter, () => toHubOrStory()));
     } else {
-      toHub();
+      toHubOrStory();
     }
   }));
 }
@@ -187,9 +207,9 @@ function finishMonth() {
     const ch = S.chapter;
     if (STORY[ch] && !S.seenStory?.[ch]) {
       markSeen(ch);
-      goto(() => new Story(ch, () => toHub()));
+      goto(() => new Story(ch, () => toHubOrStory()));
     } else {
-      toHub();
+      toHubOrStory();
     }
   }));
 }
