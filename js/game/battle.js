@@ -16,6 +16,7 @@ import {
   ENEMIES, ALLIES, CONSUMABLES, BOSS_MOVES, OBJECTIVES, ELITES, WEATHER, FOREGROUND,
 } from '../data/gamedata.js';
 import { MASTERY } from '../data/features.js';
+import { inSwing, inCollide, sameLane, LANE, LANE_SHOT } from './hit.js';
 import { PROVISION, STRATAGEMS, DUEL } from '../data/rtk.js';
 import {
   S, weapon, armor, playerMaxHp, upLevel, equippedSkills, attackMul, trinketMod, diff,
@@ -24,7 +25,7 @@ import {
 import {
   leftHeld, rightHeld, jumpPressed, attackPressed, guardHeld, guardPressed,
   dashPressed, pausePressed, pressed, keyLabel, pointer,
-  attackHeld, attackReleased,
+  attackHeld, attackReleased, upHeld, downHeld,
   KEYS, rebind, resetBindings, codeLabel, lastPressedCode,
 } from '../core/input.js';
 
@@ -100,8 +101,26 @@ function aberrCanvas(w, h) {
   if (_aberr.width !== w || _aberr.height !== h) { _aberr.width = w; _aberr.height = h; }
   return _aberr;
 }
-const GROUND = 470;          // y of the floor line
+const GROUND = 470;          // y of the floor line at the front of the plane
 const ARENA = 2200;          // world width
+
+// ------------------------------------------------------------- 2.5D
+//
+// A side-on brawler with everyone standing on one line is unavoidably flat: the
+// art can be as good as it likes and the scene still reads as cardboard slid in
+// front of a painting. Giving each body a depth -- how far back on the floor it
+// stands -- costs one number and buys the three cues that actually sell space:
+// things further away are smaller, sit higher on the screen, and are hazed by
+// the air between. The fight stays 2D; only the floor gains a dimension.
+const DEPTH_RISE = 62;       // px the floor climbs from front row to back
+const DEPTH_SHRINK = 0.26;   // how much smaller the back row draws
+const LIGHT_DIR = 0.55;      // sun from the upper left, so shadows lean right
+
+/** Screen y of the floor at depth z (0 = nearest, 1 = furthest). */
+const floorAt = (z) => GROUND - z * DEPTH_RISE;
+
+/** Draw scale at depth z. */
+const depthScale = (z) => 1 - z * DEPTH_SHRINK;
 const GRAVITY = 2100;
 // How far apart bodies are held. Melee AI never closes nearer than this, so
 // every engage range below is clamped to sit just outside it.
@@ -553,17 +572,29 @@ class Actor {
       state: 'idle', t: 0, anim: 0,
       hitFlash: 0, stun: 0, dead: false, deadT: 0,
       atkDone: false, invuln: 0,
+      z: 0,                 // 0 = front of the floor, 1 = back
+      vz: 0,
     }, cfg);
     this.maxHp = this.hp;
+    this.y = floorAt(this.z);
   }
 
-  get onGround() { return this.y >= GROUND - 0.5; }
+  /** The floor under this body, which depends on how far back it stands. */
+  get baseY() { return floorAt(this.z); }
+
+  get onGround() { return this.y >= this.baseY - 0.5; }
 
   physics(dt) {
     this.x += this.vx * dt;
+    // Depth drifts toward its target rather than snapping, so stepping "into"
+    // the scene reads as a step rather than a teleport.
+    if (this.vz) {
+      this.z = clamp(this.z + this.vz * dt, 0, 1);
+      this.vz = approach(this.vz, 0, 6, dt);
+    }
     this.y += this.vy * dt;
-    if (this.y < GROUND) this.vy += GRAVITY * dt;
-    else { this.y = GROUND; this.vy = 0; }
+    if (this.y < this.baseY) this.vy += GRAVITY * dt;
+    else { this.y = this.baseY; this.vy = 0; }
     this.x = clamp(this.x, 40, ARENA - 40);
     this.anim += dt;
     this.hitFlash = Math.max(0, this.hitFlash - dt * 4);
@@ -691,17 +722,37 @@ class Actor {
     }
     if (this.invuln > 0 && Math.floor(this.invuln * 20) % 2) alpha *= 0.45;
 
-    // Airborne actors get a smaller, fainter shadow left on the floor below.
-    const lift = clamp((GROUND - this.y) / 240, 0, 1);
-    groundShadow(ctx, this.x - cam, GROUND + 1, h * (0.46 - lift * 0.18),
-      (0.5 - lift * 0.34) * alpha);
-    drawSprite(ctx, img(sprite), this.x - cam + (p.dx || 0), this.y + p.dy + sink, h, {
-      flip: this.dir < 0,
-      alpha, rot, sx: p.sx, sy: p.sy,
-      tint: this.whiteFlash > 0
-        ? `rgba(255,246,232,${Math.min(0.92, this.whiteFlash)})`
-        : this.hitFlash > 0 ? `rgba(255,90,60,${this.hitFlash * 0.7})` : null,
-    });
+    // ---- 2.5D. Three cues, all driven by the one depth number.
+    const z = this.z || 0;
+    const ds = depthScale(z);
+    const dh = h * ds;
+
+    // 1. The shadow sits on the floor at *this* body's depth, and leans with
+    // the light, so a row of bodies reads as standing at different distances
+    // rather than all glued to one line.
+    const lift = clamp((this.baseY - this.y) / 240, 0, 1);
+    groundShadow(ctx, this.x - cam, this.baseY + 1, dh * (0.46 - lift * 0.18),
+      (0.5 - lift * 0.34) * alpha * (1 - z * 0.25), LIGHT_DIR);
+
+    drawSprite(ctx, img(sprite), this.x - cam + (p.dx || 0) * ds,
+      this.y + p.dy * ds + sink, dh, {
+        flip: this.dir < 0,
+        alpha, rot, sx: p.sx, sy: p.sy,
+        tint: this.whiteFlash > 0
+          ? `rgba(255,246,232,${Math.min(0.92, this.whiteFlash)})`
+          : this.hitFlash > 0 ? `rgba(255,90,60,${this.hitFlash * 0.7})` : null,
+      });
+
+    // 3. Aerial perspective: the air between you and a distant body washes it
+    // toward the backdrop. Cheap, and it does more for depth than the scaling.
+    if (z > 0.05) {
+      drawSprite(ctx, img(sprite), this.x - cam + (p.dx || 0) * ds,
+        this.y + p.dy * ds + sink, dh, {
+          flip: this.dir < 0,
+          alpha: alpha * z * 0.30, rot, sx: p.sx, sy: p.sy,
+          tint: 'rgba(150,168,190,1)',
+        });
+    }
   }
 
   drawBar(ctx, cam, label, opts = {}) {
@@ -1010,7 +1061,17 @@ class Player extends Actor {
         }
         this.vx = approach(this.vx, 0, 14, dt);
       } else {
+        // Depth is a movement axis now: up walks into the scene, down walks out
+        // of it. This is what turns a line of foes into a floor you can flank
+        // across instead of a queue you have to chew through.
+        // Up walks *into* the scene, which is increasing depth. Getting this
+        // backwards pinned the player at z=0 -- the front edge -- with the
+        // velocity clamped against the wall, so the axis existed and did
+        // nothing.
+        const mz = (upHeld() ? 1 : 0) + (downHeld() ? -1 : 0);
+        if (mz && this.onGround) this.vz = mz * 0.9;
         if (mx) { this.dir = mx; this.vx = mx * 300; this.state = 'run'; }
+        else if (mz && this.onGround) { this.state = 'run'; }
         else { this.state = this.onGround ? 'idle' : 'air'; }
         if (!this.onGround) this.state = 'air';
       }
@@ -1181,6 +1242,7 @@ class Player extends Actor {
         scene.projectiles.push(new Projectile({
           x, y: GROUND - 460, vx: 0, vy: 1150,
           dmg: this.dmg * 0.65 * this.power(), from: 'player', kind: 'arrow', falling: true,
+          wide: true,
         }));
       });
     }
@@ -1280,7 +1342,7 @@ class Player extends Actor {
     } else if (pick.id === 'bomb') {
       scene.projectiles.push(new Projectile({
         x: this.x + this.dir * 30, y: this.y - 100, vx: this.dir * 520, vy: -260,
-        dmg: 60, from: 'player', kind: 'bomb', arc: true, blast: 190,
+        dmg: 60, from: 'player', kind: 'bomb', arc: true, blast: 190, z: this.z,
       }));
     }
   }
@@ -1419,7 +1481,7 @@ class Player extends Actor {
         scene.projectiles.push(new Projectile({
           x: this.x + this.dir * 30, y: this.y - 96 + spread * 0.5,
           vx: this.dir * speed, vy: spread * 1.4,
-          dmg, from: 'player', kind: wp.blast ? 'blast' : 'arrow',
+          dmg, from: 'player', kind: wp.blast ? 'blast' : 'arrow', z: this.z,
           pierce: (wp.pierce || 1) + (m.pierce || 0),
           blast: wp.blast ? wp.blast * (1 + (m.blast || 0)) : 0, tint,
         }));
@@ -1459,8 +1521,7 @@ class Player extends Actor {
     const breaks = wp.guardBreak || m.guardBreak;
     for (const e of scene.enemies) {
       if (e.dead || pierced >= maxPierce) continue;
-      const dx = (e.x - this.x) * this.dir;
-      if (dx > -24 && dx < this.reach && Math.abs(e.y - this.y) < 130) {
+      if (inSwing(this, e, this.reach)) {
         pierced += 1;
         // The finisher always crits; a mastery can also roll one early.
         const crit = this.combo >= last || (m.crit > 0 && Math.random() < m.crit);
@@ -1679,7 +1740,7 @@ class Enemy extends Actor {
       this.t -= dt;
       this.vx = this.dir * this.moveSpeed * 3.1;
       for (const target of [p]) {
-        if (Math.abs(target.x - this.x) < 52 && Math.abs(target.y - this.y) < 130) {
+        if (inCollide(this, target, 52)) {
           target.takeHit(this.power * 1.25, this.dir, scene, { attacker: this });
           this.state = 'recover'; this.t = 0.7; this.vx *= -0.3;
         }
@@ -1699,6 +1760,29 @@ class Enemy extends Actor {
     }
 
     this.dir = dx >= 0 ? 1 : -1;
+
+    // Close the depth gap, the same way an ally does.
+    //
+    // When depth was introduced the chase went in on Ally only, and foes were
+    // left pinned to the rank they spawned on. That was not a cosmetic gap: a
+    // swing is depth-bound but the old enemy hit test was a flat screen-space
+    // band, so a foe standing two ranks back could reach the player while the
+    // player's own swing passed straight through it. Roughly two thirds of a
+    // wave spawned unhittable and hitting back.
+    //
+    // The personal slot and the closing override are the Ally fix carried over
+    // verbatim, and for the same reason: homing on the player's exact rank
+    // collapses the crowd onto one line, but holding the offset while in range
+    // makes the two chase each other forever.
+    if (this.zSlot === undefined) this.zSlot = rand(-0.3, 0.3);
+    const closing = dist < Math.max(this.reach, SEPARATION + 20) * 1.6;
+    const wantZ = closing
+      ? clamp(p.z || 0, 0, 0.92)
+      : clamp((p.z || 0) + this.zSlot, 0, 0.92);
+    const dz = wantZ - (this.z || 0);
+    this.vz = Math.abs(dz) > 0.05 ? clamp(dz * 2.2, -0.7, 0.7) : 0;
+    const zGap = Math.abs((p.z || 0) - (this.z || 0));
+
     const waiting = this.engaged === false && this.cfg.kind !== 'ranged';
     const wantRange = this.cfg.kind === 'ranged'
       ? clamp(this.cfg.reach * 0.55, 180, 380)
@@ -1720,6 +1804,10 @@ class Enemy extends Actor {
       this.vx = approach(this.vx, 0, 10, dt);
       this.state = 'idle';
       if (waiting) { this.cool = Math.max(this.cool, 0.25); return; }
+      // In range, but standing on another rank. Hold and let the depth chase
+      // bring it level -- committing here is what would let a foe swing across
+      // the floor at someone it cannot reach.
+      if (zGap > LANE) { this.cool = Math.max(this.cool, 0.2); return; }
       if (this.cool <= 0) {
         const move = BOSS_MOVES[this.id];
         // Bosses lead with a named, well-telegraphed move about half the time
@@ -1756,7 +1844,7 @@ class Enemy extends Actor {
       scene.projectiles.push(new Projectile({
         x: this.x + this.dir * 26, y: this.y - this.h * 0.58,
         vx: this.dir * (this.cfg.proj === 'bullet' ? 1050 : 660),
-        dmg: this.power, from: 'enemy', kind: this.cfg.proj,
+        dmg: this.power, from: 'enemy', kind: this.cfg.proj, z: this.z,
       }));
       this.cfg.proj === 'bullet' ? sfx.gun() : sfx.arrow();
       return;
@@ -1766,17 +1854,18 @@ class Enemy extends Actor {
       this.reach * 0.8, 'rgba(255,150,120,.75)');
     scene.fx.trail(this.x + this.dir * 22, this.y - this.h * 0.55, this.dir,
       this.reach * 0.3, this.reach * 0.95, -1.0, 0.7, 'rgba(255,140,110,.75)');
-    const dx = (p.x - this.x) * this.dir;
-    if (dx > -30 && dx < this.reach && Math.abs(p.y - this.y) < 140) {
+    if (inSwing(this, p, this.reach, { back: 30, lift: 140 })) {
       const mult = this.phase === 2 ? 1.25 : 1;
       p.takeHit(this.power * mult, this.dir, scene, { attacker: this });
     }
 
-    // A boss sweep also scatters your allies.
+    // A boss sweep also scatters your allies -- on its own rank. This is a
+    // basic strike, not the named move, so it plays by the same rule as
+    // everything else and your hired blades can stand off the line.
     if (this.cfg.boss) {
       for (const a of scene.allies) {
         if (a.dead) continue;
-        if (Math.abs(a.x - this.x) < this.reach) {
+        if (inCollide(this, a, this.reach)) {
           a.hurt(this.power * 0.7, this.dir, scene.fx, { knock: 300 });
         }
       }
@@ -1784,6 +1873,14 @@ class Enemy extends Actor {
   }
 
   /** A boss signature move: multi-hit sweeps, leaps, or ground shockwaves. */
+  /**
+   * A boss's named move, and the one attack in the game that ignores depth on
+   * purpose. Every other swing is bound to a rank, so stepping off the line is
+   * the universal dodge; these are the moments where that answer is taken away
+   * and you have to read the tell instead. The cost is paid up front -- a full
+   * second of windup, a shouted name, and a ring drawn flat across the ground
+   * to say the whole floor is inside it.
+   */
   strikeSpecial(scene, mv) {
     const p = scene.player;
     const dmg = this.power * mv.dmg * (this.phase === 2 ? 1.2 : 1);
@@ -1817,7 +1914,7 @@ class Enemy extends Actor {
       for (const d of [-1, 1]) {
         scene.projectiles.push(new Projectile({
           x: this.x + d * 40, y: GROUND - 26, vx: d * 420,
-          dmg: dmg * 0.7, from: 'enemy', kind: 'shock',
+          dmg: dmg * 0.7, from: 'enemy', kind: 'shock', wide: true,
         }));
       }
       scene.fx.burst(this.x, GROUND, 30, { color: '#c9a877', spread: 460, up: 40 });
@@ -1964,7 +2061,10 @@ class Ally extends Actor {
         const mul = (this.rally || 0) > 0 ? 1.25 : 1;
         for (const e of scene.enemies) {
           if (e.dead) continue;
-          if ((e.x - this.x) * this.dir > -20 && (e.x - this.x) * this.dir < Math.max(this.cfg.reach, SEPARATION + 16)) {
+          // Bound to the rank the ally is standing on, like every other swing.
+          // Left open, a hired blade would clear the whole floor from one spot
+          // while the player has to walk to each rank.
+          if (inSwing(this, e, Math.max(this.cfg.reach, SEPARATION + 16), { back: 20 })) {
             e.hurt(this.cfg.dmg * mul * (this.statDmg || 1), this.dir,
               scene.fx, { knock: 150 });
             if (e.dead) scene.onKill(e);
@@ -1975,8 +2075,38 @@ class Ally extends Actor {
     }
     if (this.state === 'attack') { this.t -= dt; if (this.t <= 0) this.state = 'idle'; return; }
 
-    if (Math.abs(dx) > Math.max(this.cfg.reach * 0.7, SEPARATION + 6)) {
-      this.vx = this.dir * this.cfg.speed; this.state = 'run';
+    // Close the depth gap -- but to a place of their own, not to the player's
+    // exact rank.
+    //
+    // Simply homing on p.z made the whole crowd converge onto one line again the
+    // moment they arrived, which threw away the depth they spawned with. Each
+    // body keeps a personal offset, so they settle into a ring around the player
+    // the way a brawler crowd should, and the ones behind are visibly behind.
+    if (this.zSlot === undefined) this.zSlot = rand(-0.3, 0.3);
+    // The offset is for loitering, not for fighting.
+    //
+    // Holding it all the way in made the crowd unreachable: the player steps up
+    // to match a foe's depth, the foe re-targets player.z + offset, and the two
+    // chase each other forever -- a soak run logged 6,815 depth steps and five
+    // kills. Inside striking distance they commit to the player's own rank, so
+    // stepping through the floor is a way to break contact rather than a way to
+    // make contact impossible.
+    const closing = Math.abs(dx) < Math.max(this.cfg.reach, SEPARATION + 20) * 1.6;
+    const wantZ = closing
+      ? clamp(p.z || 0, 0, 0.92)
+      : clamp((p.z || 0) + this.zSlot, 0, 0.92);
+    const dz = wantZ - (this.z || 0);
+    if (Math.abs(dz) > 0.05) this.vz = clamp(dz * 2.2, -0.7, 0.7);
+    else this.vz = 0;
+
+    // A body only swings when it is beside the player in depth as well as in
+    // distance, which is what makes stepping up or down the floor a dodge.
+    const zGap = Math.abs((p.z || 0) - (this.z || 0));
+    if (Math.abs(dx) > Math.max(this.cfg.reach * 0.7, SEPARATION + 6)
+      || zGap > 0.3) {
+      this.vx = this.dir * this.cfg.speed
+        * (Math.abs(dx) > SEPARATION + 6 ? 1 : 0.15);
+      this.state = 'run';
     } else {
       this.vx = approach(this.vx, 0, 10, dt);
       this.state = 'idle';
@@ -1999,10 +2129,31 @@ class Ally extends Actor {
 class Projectile {
   constructor(cfg) {
     Object.assign(this, {
-      x: 0, y: 0, vx: 0, vy: 0, dmg: 5, from: 'enemy', kind: 'arrow',
+      x: 0, y: 0, z: 0, vx: 0, vy: 0, dmg: 5, from: 'enemy', kind: 'arrow',
       dead: false, t: 0, arc: false, falling: false, blast: 0, pierce: 1, hitList: null,
       tint: null,
+      // A shot travels down one rank of the floor: step off the line and it
+      // misses. A barrage does not -- arrow rain and a ground shockwave cover
+      // every rank, which is the point of them.
+      wide: false,
     }, cfg);
+  }
+
+  /**
+   * Where this shot sits relative to the floor under the body it might hit.
+   *
+   * Depth raises a body up the screen, so two things at the same height above
+   * their own ground have different screen y. Comparing raw y made a shot fired
+   * at chest height read as overhead against anyone standing further back.
+   */
+  heightOver(t) {
+    return (this.y - floorAt(this.wide ? (t.z || 0) : this.z))
+      - (t.y - t.baseY);
+  }
+
+  /** A shot only touches bodies on its own rank; a barrage touches all of them. */
+  onLane(t) {
+    return this.wide || sameLane(this, t, LANE_SHOT);
   }
 
   /** Bombs and arrow-rain shafts detonate where they land. */
@@ -2052,7 +2203,8 @@ class Projectile {
 
     if (this.from === 'enemy') {
       const p = scene.player;
-      if (!p.dead && Math.abs(p.x - this.x) < 26 && Math.abs(p.y - 90 - this.y) < 76) {
+      if (!p.dead && Math.abs(p.x - this.x) < 26
+        && this.onLane(p) && Math.abs(this.heightOver(p) + 90) < 76) {
         p.takeHit(this.dmg, Math.sign(this.vx), scene);
         this.dead = true;
         scene.fx.burst(this.x, this.y, 7, { color: '#ffb27a' });
@@ -2060,7 +2212,8 @@ class Projectile {
     } else {
       for (const e of scene.enemies) {
         if (e.dead) continue;
-        if (Math.abs(e.x - this.x) < 30 && Math.abs(e.y - e.h * 0.5 - this.y) < e.h * 0.5) {
+        if (Math.abs(e.x - this.x) < 30
+          && this.onLane(e) && Math.abs(this.heightOver(e) + e.h * 0.5) < e.h * 0.5) {
           if (this.kind === 'bomb' || this.kind === 'blast') { this.land(scene); return; }
           if (this.hitList && this.hitList.includes(e)) continue;
           e.hurt(this.dmg, Math.sign(this.vx) || 1, scene.fx, { knock: 120 });
@@ -2435,6 +2588,11 @@ export class Battle {
         ? ELITES[Math.floor(rand(0, ELITES.length))] : null;
       const px = clamp(x + rand(-30, 40), 130, ARENA - 130);
       const e = new Enemy(id, px, elite);
+      // Stand them across the depth of the floor. Spawning everyone on one line
+      // was what made a doubled wave read as a chorus line; scattered in z they
+      // read as a crowd, and the ones at the back are visibly further off.
+      e.z = ENEMIES[id].boss ? 0.12 : rand(0, 0.85);
+      e.y = e.baseY;
       // Face the player from the moment they exist, so a spawn is never seen
       // with its back turned for the frame before the AI first ticks.
       e.dir = px > this.player.x ? -1 : 1;
@@ -2941,8 +3099,12 @@ export class Battle {
     // Depth sort so nearer bodies overlap correctly.
     // Everyone sorts by ground depth, but the player is painted last so the
     // figure you control is never buried under a crowd.
+    // Painter's order along the floor: furthest back first. Sorting by screen y
+    // alone breaks the moment bodies stand at different depths, because a
+    // distant actor sits *higher* on the screen and would otherwise be drawn
+    // over the one in front of it.
     const actors = [...this.enemies, ...this.allies]
-      .sort((a, b) => a.y - b.y || a.x - b.x);
+      .sort((a, b) => (b.z || 0) - (a.z || 0) || a.y - b.y || a.x - b.x);
     for (const a of actors) a.draw(ctx, this.cam);
     this.player.draw(ctx, this.cam, this.player.sprite(), this.player.drawHeight());
     this.drawCart(ctx);
@@ -3155,7 +3317,7 @@ export class Battle {
     // the player standing on, whatever the picture behind it is doing.
     const t = this.groundTone || { r: 60, g: 46, b: 32 };
     const near = (k) => `rgb(${Math.round(t.r * k)},${Math.round(t.g * k)},${Math.round(t.b * k)})`;
-    const TOP = GROUND - 30;
+    const TOP = GROUND - DEPTH_RISE - 26;
 
     const plane = ctx.createLinearGradient(0, TOP, 0, H);
     plane.addColorStop(0, near(0.52));
@@ -3178,6 +3340,43 @@ export class Battle {
     lit.addColorStop(1, 'rgba(240,222,180,0)');
     ctx.fillStyle = lit;
     ctx.fillRect(0, GROUND - 5, W, 17);
+
+    // A floor with perspective.
+    //
+    // The band was a flat gradient, which is fine when everyone stands on one
+    // line and immediately wrong once they do not. These are the receding
+    // lines of the plane: lateral scuffs that converge as they go back, and
+    // depth rails that fan toward a vanishing point. Bodies now sit *on* it
+    // rather than in front of it.
+    ctx.save();
+    const HORIZON = GROUND - DEPTH_RISE;
+    // Lateral bands: spacing compresses toward the back, the oldest trick for
+    // reading distance on a plane.
+    for (let i = 0; i <= 6; i++) {
+      const zz = i / 6;
+      const yy = floorAt(zz);
+      ctx.globalAlpha = 0.05 + (1 - zz) * 0.07;
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 1 + (1 - zz);
+      ctx.beginPath();
+      ctx.moveTo(0, yy);
+      ctx.lineTo(W, yy);
+      ctx.stroke();
+    }
+    // Depth rails, converging on a vanishing point above the centre of the
+    // floor. Scrolled with the camera so the plane moves with the world.
+    ctx.globalAlpha = 0.07;
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 1;
+    const vpx = W / 2 - (this.cam * 0.06) % W;
+    for (let i = -8; i <= 8; i++) {
+      const fx = ((i * 150 - this.cam * 0.9) % (W * 2) + W * 2) % (W * 2) - W / 2;
+      ctx.beginPath();
+      ctx.moveTo(fx, H + 40);
+      ctx.lineTo(vpx + (fx - vpx) * 0.42, HORIZON);
+      ctx.stroke();
+    }
+    ctx.restore();
 
     // Scuff marks scrolling with the camera give the plane a sense of depth.
     ctx.save();

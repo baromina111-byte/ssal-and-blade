@@ -402,12 +402,20 @@ export function seasonFactor(goodId, mIdx) {
 }
 
 /** Sum of active world-event modifiers touching this good. */
+/**
+ * Event pressure on a price.
+ *
+ * Capped at both ends. Events used to be the only thing moving prices and could
+ * be as loud as they liked; now they multiply a real scarcity figure, and two
+ * bad cards stacking on a short good sent one town's charcoal through a 13x
+ * range. A famine should be dear, not unbuyable.
+ */
 export function modFactor(goodId) {
   let f = 1;
   for (const m of S.mods) {
     if (m.goods === 'all' || m.goods === goodId) f += m.amount;
   }
-  return Math.max(0.25, f);
+  return clamp(f, 0.6, 1.65);
 }
 
 /**
@@ -466,7 +474,7 @@ export function scarcity(cityId, goodId) {
   // nobody could plan against. Half-power with a 2.1x ceiling still makes a
   // shortage hurt and a glut worth avoiding, but keeps a season's range inside
   // roughly 2-3x once season and events are layered on top.
-  return clamp((want / have) ** 0.5, 0.5, 2.1);
+  return clamp((want / have) ** 0.5, 0.58, 1.9);
 }
 
 /** Move a town's stock, the only way a price is allowed to change by trade. */

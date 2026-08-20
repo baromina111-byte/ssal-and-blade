@@ -61,7 +61,15 @@ export const MANIFEST = {
     'npc_caravan', 'npc_inspector'],
   cut: ['cut_raid', 'cut_ashes', 'cut_firstwin', 'cut_shopopen', 'cut_blacktiger',
     'cut_landing', 'cut_seabattle', 'cut_qing', 'cut_caravan', 'cut_ending'],
-  ui: ['title', 'map', 'victory', 'defeat', 'counter', 'seal'],
+  ui: ['title', 'map', 'victory', 'defeat', 'counter', 'seal',
+    // Painted backdrops for the management screens. The hub used to borrow the
+    // battle backgrounds, so the trading half of the game looked like a fight
+    // with a panel over it.
+    'hub_market', 'hub_warehouse', 'hub_office', 'hub_warroom', 'hub_vault',
+    'hub_yard', 'map_joseon',
+    // One isometric view per town, for the map.
+    'city_hanyang', 'city_gaeseong', 'city_jeonju', 'city_pyongyang',
+    'city_dongnae'],
 };
 
 // ------------------------------------------------------------------ trade
@@ -1010,8 +1018,9 @@ export const FLOWS = {
   },
   pyongyang: {
     // The northern gate: charcoal from the hills, fur over the border.
-    make: { charcoal: 31, fur: 7, herb: 6, rice: 17 },
-    eat: { rice: 26, salt: 9, silk: 2, porcelain: 1, paper: 3, tobacco: 4 },
+    make: { charcoal: 45, fur: 7, herb: 6, rice: 17 },
+    eat: { rice: 26, salt: 9, charcoal: 14, silk: 2, porcelain: 1,
+      paper: 3, tobacco: 4 },
   },
   dongnae: {
     // Salt pans, and whatever the 왜관 lands that month.

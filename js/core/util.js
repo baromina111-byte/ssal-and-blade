@@ -207,16 +207,27 @@ export function drawSprite(ctx, img, x, y, h, opts = {}) {
  * actually sells the contact -- a single soft blob reads as a figure hovering
  * above the ground rather than standing on it.
  */
-export function groundShadow(ctx, x, y, w, alpha = 0.35) {
+/**
+ * Contact shadow on the floor.
+ *
+ * `skew` shifts the blob sideways and stretches it, which is what sells a
+ * directional light: a body lit from the upper left throws its shadow down and
+ * to the right, and the farther back it stands the longer and fainter that
+ * shadow gets. A symmetric ellipse under everyone reads as a sticker on a
+ * backdrop no matter how good the art is.
+ */
+export function groundShadow(ctx, x, y, w, alpha = 0.35, skew = 0) {
   ctx.save();
   ctx.fillStyle = '#000';
-  ctx.globalAlpha = alpha * 0.55;
+  const lean = w * skew * 0.42;
+  ctx.globalAlpha = alpha * 0.5;
   ctx.beginPath();
-  ctx.ellipse(x, y, w * 0.62, w * 0.19, 0, 0, Math.PI * 2);
+  ctx.ellipse(x + lean, y, w * (0.62 + Math.abs(skew) * 0.28), w * 0.19,
+    skew * 0.16, 0, Math.PI * 2);
   ctx.fill();
-  ctx.globalAlpha = alpha * 1.25;
+  ctx.globalAlpha = alpha * 1.2;
   ctx.beginPath();
-  ctx.ellipse(x, y, w * 0.30, w * 0.085, 0, 0, Math.PI * 2);
+  ctx.ellipse(x + lean * 0.4, y, w * 0.30, w * 0.085, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }

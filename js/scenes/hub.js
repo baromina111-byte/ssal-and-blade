@@ -100,9 +100,12 @@ function weaponSigil(ctx, wp, cx, cy, alpha = 1) {
 const W = 960, H = 540;
 const TABS = ['저잣거리', '계약', '상단', '무구', '무예', '보패', '사람',
   '경략', '팔도', '출정', '공적', '장부'];
-const TAB_BG = ['market', 'shop_interior', 'warehouse', 'fortress_yard',
-  'fortress_gate', 'palace', 'village_day', 'palace', null, null,
-  'fortress_yard', 'shop_interior'];
+// Painted per screen now, and reached through ui/ rather than bg/, so the
+// management half stops looking like a battlefield with a form over it.
+const TAB_BG = ['ui/hub_market', 'ui/hub_office', 'ui/hub_warehouse',
+  'ui/hub_warroom', 'ui/hub_warroom', 'ui/hub_vault', 'ui/hub_yard',
+  'ui/hub_warroom', 'ui/map_joseon', 'ui/hub_warroom', 'ui/hub_office',
+  'ui/hub_office'];
 
 export class Hub {
   /** @param {{onBattle:Function, onEndMonth:Function}} hooks */
@@ -199,20 +202,34 @@ export class Hub {
 
   drawBackdrop(ctx) {
     const key = TAB_BG[this.tab];
-    const bg = key ? img(`bg/${key}`) : null;
+    const bg = key ? img(key) : null;
     ctx.fillStyle = '#14110c';
     ctx.fillRect(0, 0, W, H);
     if (bg) {
       ctx.save();
-      ctx.globalAlpha = 0.30;
-      ctx.filter = 'blur(1px)';
+      // Brighter and sharper than before. At 30% behind a 55% black wash the
+      // painting may as well not have been there; the panels already carry
+      // their own fill, so the backdrop can be seen without hurting the text.
+      ctx.globalAlpha = 0.62;
       const s = Math.max(W / bg.width, H / bg.height);
-      ctx.drawImage(bg, (W - bg.width * s) / 2, (H - bg.height * s) / 2,
+      // Drift slowly, so a static screen still breathes.
+      const px = Math.sin(this.t * 0.14) * 10;
+      const py = Math.cos(this.t * 0.1) * 6;
+      ctx.drawImage(bg, (W - bg.width * s) / 2 + px, (H - bg.height * s) / 2 + py,
         bg.width * s, bg.height * s);
       ctx.restore();
+
+      // Vignette instead of a flat wash: the middle stays readable and the
+      // edges fall away, which is what keeps the art from fighting the panels.
+      const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.22, W / 2, H / 2, H * 0.95);
+      v.addColorStop(0, 'rgba(14,11,8,.34)');
+      v.addColorStop(1, 'rgba(10,8,5,.88)');
+      ctx.fillStyle = v;
+      ctx.fillRect(0, 0, W, H);
+    } else {
+      ctx.fillStyle = 'rgba(14,11,8,.55)';
+      ctx.fillRect(0, 0, W, H);
     }
-    ctx.fillStyle = 'rgba(14,11,8,.55)';
-    ctx.fillRect(0, 0, W, H);
   }
 
   drawHeader(ctx) {
@@ -301,7 +318,7 @@ export class Hub {
     panel(ctx, 24, top, 340, 336);
     text(ctx, `${city().name} 시세`, 40, top + 24, { size: 15, weight: 800, color: '#f0dfb4' });
     text(ctx, city().blurb, 40, top + 42, { size: 11, color: '#8d8069', max: 300 });
-    text(ctx, '재고 / 월 수급', 196, top + 42, { size: 9, color: '#6d6455' });
+    text(ctx, '재고 · 수급', 196, top + 42, { size: 9, color: '#6d6455' });
 
     GOODS.forEach((g, i) => {
       const y = top + 54 + i * 28;
@@ -343,8 +360,12 @@ export class Hub {
       // Net flow: is this town a source or a sink for this good?
       const net = makes(S.city, g.id) - eats(S.city, g.id);
       if (net) {
+        // Right-aligned and clear of the price column: a three-digit price
+        // starts around x=262 and was colliding with a left-aligned flow.
         text(ctx, net > 0 ? `+${Math.round(net)}` : `${Math.round(net)}`,
-          252, y + 18, { size: 10, color: net > 0 ? '#7fc98f' : '#8d8069' });
+          256, y + 18, {
+            size: 10, align: 'right', color: net > 0 ? '#7fc98f' : '#8d8069',
+          });
       }
 
       text(ctx, `${won(p)}냥`, 300, y + 18, { size: 13, weight: 700, color: col, align: 'right' });
@@ -1458,6 +1479,31 @@ export class Hub {
 
     const cost = travelCost(c.id);
     const risk = ambushChance(c.id);
+    // The town itself, painted. A list of numbers with a name on top told the
+    // player nothing about where they were standing.
+    const view = img(`ui/city_${c.id}`);
+    if (view) {
+      ctx.save();
+      roundRect(ctx, 522, top + 68, 398, 96, 8);
+      ctx.clip();
+      const sc = Math.max(398 / view.width, 96 / view.height);
+      ctx.globalAlpha = open ? 1 : 0.25;
+      ctx.drawImage(view, 522 + (398 - view.width * sc) / 2,
+        top + 68 + (96 - view.height * sc) / 2, view.width * sc, view.height * sc);
+      // Sink the bottom edge into the panel so it reads as a window, not a
+      // sticker.
+      const g2 = ctx.createLinearGradient(0, top + 126, 0, top + 164);
+      g2.addColorStop(0, 'rgba(18,15,10,0)');
+      g2.addColorStop(1, 'rgba(18,15,10,.95)');
+      ctx.fillStyle = g2;
+      ctx.fillRect(522, top + 126, 398, 38);
+      ctx.restore();
+      ctx.strokeStyle = 'rgba(120,104,78,.5)';
+      ctx.lineWidth = 1;
+      roundRect(ctx, 522, top + 68, 398, 96, 8);
+      ctx.stroke();
+    }
+
     const dh = HOLDERS[heldBy(c.id)];
     text(ctx, `${dh.name}이 쥐고 있다`, 916, top + 34, {
       size: 12, weight: 700, align: 'right', color: dh.color,
@@ -1466,26 +1512,32 @@ export class Hub {
       text(ctx, '남의 땅 — 물가 +18%', 916, top + 52,
         { size: 10, align: 'right', color: '#e0806a' });
     }
-    meter(ctx, 526, top + 108, 390, (S.threat[c.id] || 0) / 100, '치안 위협',
+    meter(ctx, 526, top + 176, 390, (S.threat[c.id] || 0) / 100, '치안 위협',
       (S.threat[c.id] || 0) > 55 ? '#c04a34' : '#c8892f', `${Math.round(S.threat[c.id] || 0)}`);
 
-    text(ctx, '이 고을의 시세', 526, top + 146, { size: 12, color: '#8d8069' });
+    text(ctx, '이 고을의 시세', 526, top + 206, { size: 11, color: '#8d8069' });
+    text(ctx, '여기와의 차액', 700, top + 206, { size: 9, color: '#6d6455' });
+    // Two columns of five. Ten rows in one column ran twenty pixels past the
+    // bottom of the panel and sat on top of the travel line.
     GOODS.forEach((g, i) => {
-      const y = top + 164 + i * 19;
-      const here = priceOf(S.city, g.id);
+      const col = i < 5 ? 0 : 1;
+      const cx = 526 + col * 200;
+      const y = top + 224 + (i % 5) * 16;
       const there = priceOf(c.id, g.id);
-      const diff = there - here;
-      text(ctx, g.name, 526, y, { size: 12, color: '#a39373' });
-      text(ctx, `${won(there)}냥`, 640, y, { size: 12, color: '#d8c69c', align: 'right' });
-      text(ctx, diff === 0 ? '—' : `${diff > 0 ? '+' : ''}${won(diff)}`, 730, y, {
-        size: 12, align: 'right', color: diff > 0 ? '#7fc98f' : diff < 0 ? '#e0806a' : '#7d7159',
+      const diff = there - priceOf(S.city, g.id);
+      text(ctx, g.name, cx, y, { size: 11, color: '#a39373' });
+      text(ctx, `${won(there)}`, cx + 108, y,
+        { size: 11, color: '#d8c69c', align: 'right' });
+      text(ctx, diff === 0 ? '—' : `${diff > 0 ? '+' : ''}${won(diff)}`, cx + 172, y, {
+        size: 10, align: 'right',
+        color: diff > 0 ? '#7fc98f' : diff < 0 ? '#e0806a' : '#7d7159',
       });
     });
 
     const isHere = c.id === S.city;
     text(ctx, `운송비 ${won(cost)}냥 · 습격 위험 ${Math.round(risk * 100)}%`,
-      526, top + 296, { size: 12, color: risk > 0.4 ? '#e0806a' : '#a39373' });
-    if (button(ctx, { x: 760, y: top + 282, w: 156, h: 38 },
+      526, top + 318, { size: 11, color: risk > 0.4 ? '#e0806a' : '#a39373' });
+    if (button(ctx, { x: 760, y: top + 296, w: 156, h: 34 },
       isHere ? '현재 위치' : '수레를 몬다',
       { enabled: !isHere && S.ap >= 1 && S.money >= cost, tone: 'primary', sub: isHere ? '' : '행동 1' })) {
       const r = travel(c.id);

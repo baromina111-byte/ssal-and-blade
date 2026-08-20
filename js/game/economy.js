@@ -252,15 +252,23 @@ function produceAndConsume() {
 
       // The rest of Joseon.
       //
-      // Only five towns are simulated, but the country around them also buys
-      // surplus and supplies shortage. Without that counterparty a granary
-      // accumulates without bound -- 전주 nets +116 sacks a month and nothing
-      // else removed them -- and the price pinned itself to the clamp. A gentle
-      // pull toward normal cover bounds both the glut and the famine while
-      // leaving plenty of room for events, seasons and the player to matter.
+      // Only five towns are simulated, but the country around them -- every
+      // village, every small market -- also buys surplus and supplies shortage.
+      // Two terms, and both are needed:
+      //
+      // The structural term handles a town's standing imbalance. 동래 eats 22
+      // sacks a month and grows none; a pull toward normal cover can never
+      // supply that, so its stock sat at zero, its price pinned to the ceiling,
+      // and every passing caravan crashed it -- 8.9x swings in one town. The
+      // countryside absorbs most of a town's structural surplus or deficit, and
+      // the five-city trade handles what is left.
+      //
+      // The gap term is the slower correction toward a normal holding, which is
+      // what stops a granary accumulating without bound.
       const want = coverTarget(c.id, g.id);
       const have = marketStock(c.id, g.id);
-      moveStock(c.id, g.id, (want - have) * 0.22);
+      const structural = (made - ate) * -0.55;
+      moveStock(c.id, g.id, structural + (want - have) * 0.25);
     }
   }
 }

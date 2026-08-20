@@ -182,6 +182,7 @@ function refreshLabels() {
 
 export const leftHeld = () => held(...KEYS.left);
 export const rightHeld = () => held(...KEYS.right);
+export const upHeld = () => held(...KEYS.up);
 export const downHeld = () => held(...KEYS.down);
 export const jumpPressed = () => pressed(...KEYS.jump);
 export const attackPressed = () => pressed(...KEYS.attack);
