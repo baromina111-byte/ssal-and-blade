@@ -36,6 +36,9 @@ function drawStill(ctx, key, t, opts = {}) {
 
 // -------------------------------------------------------------- title
 
+/** Where the title menu column sits, kept off the key art's subject. */
+const MENU_X = 596;
+
 export class Title {
   constructor(hooks) {
     this.hooks = hooks;
@@ -69,7 +72,17 @@ export class Title {
     ctx.globalAlpha = 1;
 
     if (this.t > 0.9) {
-      const bx = W / 2 - 110;
+      // A soft plate behind the column: the key art is pale ink on paper, so
+      // buttons and labels sitting straight on it were unreadable.
+      const g2 = ctx.createLinearGradient(MENU_X - 40, 0, MENU_X + 260, 0);
+      g2.addColorStop(0, 'rgba(14,11,8,0)');
+      g2.addColorStop(0.18, 'rgba(14,11,8,.78)');
+      g2.addColorStop(0.82, 'rgba(14,11,8,.78)');
+      g2.addColorStop(1, 'rgba(14,11,8,0)');
+      ctx.fillStyle = g2;
+      ctx.fillRect(MENU_X - 40, 258, 300, 220);
+
+      const bx = MENU_X;
       if (button(ctx, { x: bx, y: 276, w: 220, h: 42 }, '새로 시작', { tone: 'primary' })) {
         this.hooks.onNew(this.diffId);
       }
@@ -81,19 +94,19 @@ export class Title {
       // Difficulty only scales what the world does to you, so it is safe to
       // pick before knowing the game.
       const ids = Object.keys(DIFFICULTIES);
-      text(ctx, '난이도', W / 2, 380, { size: 11, align: 'center', color: '#8d8069' });
+      text(ctx, '난이도', MENU_X + 110, 374, { size: 11, align: 'center', color: '#8d8069' });
       ids.forEach((id, i) => {
         const d = DIFFICULTIES[id];
         const on = this.diffId === id;
-        if (button(ctx, { x: bx + i * 75, y: 388, w: 70, h: 30 }, d.name,
+        if (button(ctx, { x: bx + i * 75, y: 384, w: 70, h: 28 }, d.name,
           { tone: on ? 'primary' : 'ghost', size: 13 })) this.diffId = id;
       });
-      text(ctx, DIFFICULTIES[this.diffId].desc, W / 2, 435,
+      text(ctx, DIFFICULTIES[this.diffId].desc, MENU_X + 110, 428,
         { size: 11, align: 'center', color: '#9d8e70', shadow: 'rgba(0,0,0,.9)' });
 
-      if (button(ctx, { x: bx, y: 446, w: 105, h: 30 },
+      if (button(ctx, { x: bx, y: 438, w: 105, h: 28 },
         `음악 ${settings.music ? '켬' : '끔'}`, { tone: 'ghost', size: 12 })) toggleMusic();
-      if (button(ctx, { x: bx + 115, y: 446, w: 105, h: 30 },
+      if (button(ctx, { x: bx + 115, y: 438, w: 105, h: 28 },
         `효과음 ${settings.sfx ? '켬' : '끔'}`, { tone: 'ghost', size: 12 })) toggleSfx();
     }
 
@@ -393,18 +406,22 @@ export class Ending {
           : (S.crew || []).length >= 8 ? '식솔이 늘어 상단이 한 마을만큼 되었다.'
             : held <= 2 ? '지켜 낸 고을은 몇 되지 않았다.'
               : null;
+    // The coda sat at 508 and the prompt at H-28 = 512, four pixels apart, so
+    // the last line a run gets to say was printed on top of "press any key".
+    // The ledger panel ends at 496, which is all the room there is between.
     if (coda) {
-      text(ctx, coda, W / 2, 508, {
+      text(ctx, coda, W / 2, 512, {
         size: 12, align: 'center', color: '#c3b18c', shadow: 'rgba(0,0,0,.9)',
       });
     }
-    text(ctx, this.data.cond, W / 2, 318,
+    text(ctx, this.data.cond, W / 2, 314,
       { size: 11, align: 'center', color: '#8d8069' });
     ctx.globalAlpha = 1;
 
     if (this.t > 1.6 && Math.sin(this.t * 3) > -0.3) {
-      text(ctx, '아무 키나 눌러 처음으로', W / 2, H - 28,
-        { size: 13, align: 'center', color: '#9d8e70', shadow: 'rgba(0,0,0,.9)' });
+      text(ctx, '아무 키나 눌러 처음으로', W / 2, coda ? H - 8 : H - 28, {
+        size: 13, align: 'center', color: '#9d8e70', shadow: 'rgba(0,0,0,.9)',
+      });
     }
   }
 }

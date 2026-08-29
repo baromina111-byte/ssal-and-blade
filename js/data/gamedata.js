@@ -14,7 +14,37 @@ export const MANIFEST = {
     // 시전 포즈 — 던지거나 바르는 무예에만 쓴다. 검술 스킬은 손에 칼이
     // 있어야 해서 기존 'cry' 포즈를 그대로 쓴다.
     'hemp_cast', 'mail_cast',
+    // 세 번째 벌. 갑옷은 넉 단계인데 몸은 두 벌뿐이라, 피갑(4,200냥)을 사면
+    // 두정갑 차림이 되고 누비 두루마기를 사면 아무것도 안 바뀌었다. 이 벌은
+    // mail 포즈 열아홉 장을 그대로 두고 갑옷만 갈아입힌 것이라 사람도 자세도
+    // 같은 사람 같은 자세다.
+    'hide_idle', 'hide_run', 'hide_run2', 'hide_atk1', 'hide_atk1b', 'hide_atk2',
+    'hide_atk3', 'hide_atk3b', 'hide_guard', 'hide_hurt', 'hide_dash', 'hide_jump',
+    'hide_fall', 'hide_land', 'hide_plunge', 'hide_cry', 'hide_win', 'hide_down',
+    'hide_cast',
+    // 네 번째 벌. 누비 두루마기 1,200냥이 마지막으로 남은 「사도 안 바뀌는」
+    // 구매였다. hemp 포즈 위에 누빈 겨울 두루마기만 덧입혔다.
+    'pad_idle', 'pad_run', 'pad_run2', 'pad_atk1', 'pad_atk1b', 'pad_atk2',
+    'pad_atk3', 'pad_atk3b', 'pad_guard', 'pad_hurt', 'pad_dash', 'pad_jump',
+    'pad_fall', 'pad_land', 'pad_plunge', 'pad_cry', 'pad_win', 'pad_down',
+    'pad_cast',
   ],
+  // Painted effect plates. Every blow in this game used to be a stroked arc --
+  // ctx.arc at eight pixels wide -- so a killing hit and a glancing one drew the
+  // same white scratch, and the screen never once looked like a fight. These are
+  // the strokes themselves, painted: a crescent, a thrust, a starburst, sparks,
+  // ink, a muzzle flash, a blast. The vector work stays underneath them for
+  // timing and colour; the plate is what the eye actually reads.
+  fx: ['slash_wide', 'slash_flat', 'thrust', 'impact', 'crit', 'spark', 'blood',
+    'muzzle', 'blast', 'dust',
+    // 무예 쪽. 화공의 불과 철벽의 방벽은 몇 초씩 살아 있는 것이라 시전
+    // 순간이 아니라 장면 렌더에서 직접 그린다. 금창약은 초록빛인데 초록
+    // 배경에서 뽑을 수가 없어 흰색으로 그려 코드에서 물들인다.
+    'fire', 'roar', 'heal', 'smoke', 'ward', 'aura',
+    // 부딪히는 순간들. 완벽한 방어는 이 전투가 요구하는 가장 어려운
+    // 일인데 고리 하나가 전부였고, 그냥 막기는 부딪힌 자리에 아무것도
+    // 없었고, 사람이 죽는 순간에는 표시가 없었다.
+    'clash', 'guard', 'death'],
   enemies: ['bandit_grunt', 'bandit_axe', 'bandit_archer', 'bandit_brute', 'bandit_scout',
     'boss_blacktiger', 'jp_ashigaru', 'jp_samurai', 'jp_gunner', 'jp_shinobi', 'jp_naginata',
     // These are art ids, not enemy-type ids: the 명군 types (ming_*) all draw from
@@ -30,11 +60,20 @@ export const MANIFEST = {
     'qing_infantry_atk', 'qing_pike_atk', 'qing_archer_atk', 'qing_cavalry_atk',
     'qing_shield_atk', 'boss_qing_atk', 'beast_wolf_atk', 'beast_boar_atk',
     'boss_tiger_atk', 'ally_mercenary_atk', 'ally_monk_atk', 'ally_militia_atk',
+    // Four foes whose borrowed plate was not merely shared but wrong: two
+    // bosses drawn as the rank and file they command, a moon bear drawn as a
+    // boar, and a mounted courier drawn on foot.
+    'boss_gunner', 'boss_gunner_atk', 'boss_shinobi', 'boss_shinobi_atk',
+    'beast_bear', 'beast_bear_atk', 'jp_horo', 'jp_horo_atk',
     'bandit_grunt_hit', 'bandit_axe_hit', 'bandit_brute_hit', 'bandit_scout_hit',
     'jp_ashigaru_hit', 'jp_samurai_hit', 'qing_infantry_hit', 'boss_blacktiger_hit'],
   bg: ['village_day', 'village_night', 'shop_interior', 'mountain_pass', 'bamboo', 'coast',
     'fortress_gate', 'fortress_yard', 'paddy', 'market', 'palace', 'snow_ridge', 'harbor',
     'warehouse', 'burning_village', 'river_ford',
+    // Four stages were fought in front of a picture of somewhere else -- the
+    // winter march on Ulsan in a sunlit palace courtyard, a Ming army camp
+    // inside a rice warehouse. These are the places those fights happen.
+    'ulsan_road', 'ming_camp', 'waegwan_alley', 'tiger_ridge',
     // Alpha silhouette plates drawn in front of the fight.
     'fg_grass', 'fg_pine', 'fg_rock', 'fg_bamboo', 'fg_rice', 'fg_debris'],
   items: ['rice_sack', 'rice_stalk', 'coin', 'silver', 'salt', 'ginseng', 'silk', 'herb',
@@ -43,8 +82,11 @@ export const MANIFEST = {
     'tobacco', 'paper', 'porcelain', 'fur',
     'gruel', 'pill', 'talisman', 'bomb',
     'hopae', 'jadering', 'eunjangdo', 'norigae',
+    // 전략자원 셋과 지점. 말은 모피 그림을, 철은 환도 그림을, 화약은 폭탄
+    // 그림을 빌려 쓰고 있었다 -- 말이 모피 한 장으로 그려져 있었다는 뜻이다.
+    'res_horse', 'res_iron', 'res_powder', 'branch',
     'sk_stomp', 'sk_slash', 'sk_drum', 'sk_rain', 'sk_wall', 'sk_draw',
-    'sk_caltrop', 'sk_fire', 'sk_salve',
+    'sk_caltrop', 'sk_fire', 'sk_salve', 'sk_hook', 'sk_smoke',
     // Twenty-six arms, drawn one per weapon. The eight on the last two lines
     // came later and were generated against a reference sheet of the first
     // ones so the set reads as one hand -- see tools/prompts-arms.md.
@@ -56,12 +98,30 @@ export const MANIFEST = {
     // Treasures -- 보패. Found, never bought.
     't_jincheolloe', 't_mapae', 't_letter', 't_turtleship', 't_kabuto', 't_ginseng100',
     't_mala', 't_blueprint', 't_silver', 't_redrobe', 't_beacon', 't_ledger'],
-  npc: ['npc_father', 'npc_sister', 'npc_broker', 'npc_magistrate', 'npc_smith',
+  npc: [
+    // Twelve faces were being shared by forty hires. These widen the pool so a
+    // porter and a royal armourer are not the same man.
+    'npc_porter', 'npc_boy', 'npc_cook', 'npc_spearman', 'npc_herbalist',
+    'npc_boatman', 'npc_surrendered', 'npc_hunter', 'npc_shaman', 'npc_orphan',
+    'npc_armourer', 'npc_oxdriver',
+    'npc_father', 'npc_sister', 'npc_broker', 'npc_magistrate', 'npc_smith',
     'npc_physician', 'npc_scholar', 'npc_monk', 'npc_gisaeng', 'npc_interpreter',
     'npc_caravan', 'npc_inspector'],
   cut: ['cut_raid', 'cut_ashes', 'cut_firstwin', 'cut_shopopen', 'cut_blacktiger',
-    'cut_landing', 'cut_seabattle', 'cut_qing', 'cut_caravan', 'cut_ending'],
-  ui: ['title', 'map', 'victory', 'defeat', 'counter', 'seal',
+    'cut_landing', 'cut_seabattle', 'cut_qing', 'cut_caravan', 'cut_ending',
+    // Painted for the branching story. Forty-five scenes were sharing ten
+    // backdrops, so half the beats opened on a picture of something else.
+    'cut_famine', 'cut_silver', 'cut_refugees', 'cut_ruin', 'cut_ming_loot',
+    'cut_winter_convoy', 'cut_grave', 'cut_strongroom', 'cut_prisoner',
+    // One painting per ending. Five of the six used to close on a picture of
+    // something that happened in the middle of the run -- 파산 showed the
+    // burning village from chapter one, which is not how a man goes broke.
+    'cut_end_righteous', 'cut_end_magnate', 'cut_end_merchant',
+    'cut_end_musin', 'cut_end_ruin',
+    // 네 장이 남의 장면으로 열리고 있었다. 그중 명량은 칠천량의 밤 그림을
+    // 쓰고 있었다 -- 패전이 그 패전을 되갚은 승전을 대신하고 있었던 셈이다.
+    'cut_yi_arrest', 'cut_namwon', 'cut_myeongnyang', 'cut_ulsan_block'],
+  ui: ['title', 'keyart', 'map', 'victory', 'defeat', 'counter', 'seal',
     // Painted backdrops for the management screens. The hub used to borrow the
     // battle backgrounds, so the trading half of the game looked like a fight
     // with a panel over it.
@@ -284,7 +344,7 @@ export const UPGRADES = [
     desc: '습격 확률 -12%p · 동료 참전', effect: '길에서 만나는 칼을 대신 받아준다.' },
   { id: 'ledger', name: '장부술', icon: 'ledger', max: 3, cost: 2600, scale: 2.2,
     desc: '매입가 -4% · 시세 예측', effect: '숫자를 읽는 자가 상단을 먹는다.' },
-  { id: 'branch', name: '지점 개설', icon: 'ledger', max: 4, cost: 5200, scale: 2.3,
+  { id: 'branch', name: '지점 개설', icon: 'branch', max: 4, cost: 5200, scale: 2.3,
     desc: '월 고정 수입 +420냥', effect: '내가 없어도 돈이 들어온다.' },
 ];
 
@@ -296,6 +356,14 @@ export const UPGRADES = [
  * as a running grievance. So you fight deserters, foragers and a general's
  * private retinue, never the alliance itself. (The earlier build had Qing
  * troops here, which is two generations early: the Qing were founded in 1636.)
+ *
+ * Sixteen of them borrow another foe's drawing, and `tint` is what parts the
+ * two. Pick one by measuring, not by eye: the recolour runs through a `color`
+ * blend, which takes hue AND saturation from the dye, so a near-grey looks
+ * different in a swatch and does nothing at all on the sprite. 늙은 이리 was
+ * dyed a pale ash that shifted its plate by 14 of 765 -- invisible. Every dye
+ * here now moves its plate by at least 35, and no two foes on one drawing may
+ * go undyed; tools/audit.mjs holds the second half of that.
  */
 export const ENEMIES = {
   // ---------------------------------------------------------- bandits
@@ -311,19 +379,19 @@ export const ENEMIES = {
     reach: 66, windup: 0.85, recover: 0.8, loot: 120, kind: 'melee', heavy: true, faction: 'bandit' },
   bandit_slinger: { name: '돌팔매꾼', sprite: 'bandit_archer', hp: 28, dmg: 9, speed: 88, h: 148,
     reach: 300, windup: 0.5, recover: 0.62, loot: 34, kind: 'ranged', proj: 'stone',
-    tint: '#8a7a5c', faction: 'bandit' },
+    tint: '#6f8a3f', faction: 'bandit' },
   bandit_torch: { name: '불지르는 놈', sprite: 'bandit_scout', hp: 44, dmg: 14, speed: 108, h: 150,
     reach: 50, windup: 0.34, recover: 0.4, loot: 58, kind: 'melee', burn: 3,
     tint: '#c8683a', faction: 'bandit' },
   bandit_chief: { name: '산적 두령', sprite: 'bandit_axe', hp: 148, dmg: 24, speed: 82, h: 178,
     reach: 68, windup: 0.52, recover: 0.55, loot: 210, kind: 'melee', rally: true,
-    tint: '#9a5a4a', faction: 'bandit' },
+    tint: '#a03a28', faction: 'bandit' },
   deserter_spear: { name: '탈영병', sprite: 'bandit_grunt', hp: 70, dmg: 15, speed: 84, h: 158,
     reach: 88, windup: 0.5, recover: 0.54, loot: 66, kind: 'melee',
-    tint: '#6f7a68', faction: 'bandit' },
+    tint: '#5f76a8', faction: 'bandit' },
   rebel_flail: { name: '민란 농군', sprite: 'bandit_brute', hp: 96, dmg: 19, speed: 70, h: 172,
     reach: 72, windup: 0.6, recover: 0.62, loot: 52, kind: 'melee', knockRes: 0.6,
-    tint: '#7c6a4c', faction: 'bandit' },
+    tint: '#b08b2e', faction: 'bandit' },
 
   // ------------------------------------------------------------ beasts
   beast_wolf: { name: '늑대', sprite: 'beast_wolf', hp: 30, dmg: 9, speed: 152, h: 96,
@@ -332,10 +400,10 @@ export const ENEMIES = {
     reach: 50, windup: 0.5, recover: 0.6, loot: 46, kind: 'charger', faction: 'beast' },
   beast_direwolf: { name: '늙은 이리', sprite: 'beast_wolf', hp: 62, dmg: 15, speed: 176, h: 108,
     reach: 48, windup: 0.2, recover: 0.32, loot: 58, kind: 'melee',
-    tint: '#4a4a52', faction: 'beast' },
-  beast_bear: { name: '반달곰', sprite: 'beast_boar', hp: 210, dmg: 30, speed: 62, h: 150,
+    tint: '#8a6a2a', faction: 'beast' },
+  beast_bear: { name: '반달곰', sprite: 'beast_bear', hp: 210, dmg: 30, speed: 62, h: 150,
     reach: 62, windup: 0.72, recover: 0.78, loot: 180, kind: 'melee', heavy: true,
-    knockRes: 0.8, tint: '#3b3229', faction: 'beast' },
+    knockRes: 0.8, faction: 'beast' },
 
   // ------------------------------------------------------------ Japanese
   jp_ashigaru: { name: '아시가루', sprite: 'jp_ashigaru', hp: 56, dmg: 13, speed: 76, h: 158,
@@ -351,22 +419,21 @@ export const ENEMIES = {
     reach: 48, windup: 0.24, recover: 0.32, loot: 130, kind: 'melee', blink: true, faction: 'jp' },
   jp_yari: { name: '야리 아시가루', sprite: 'jp_naginata', hp: 68, dmg: 16, speed: 72, h: 164,
     reach: 106, windup: 0.58, recover: 0.6, loot: 84, kind: 'melee',
-    tint: '#5e6a7a', faction: 'jp' },
+    tint: '#3a6a5a', faction: 'jp' },
   jp_ronin: { name: '떠돌이 낭인', sprite: 'jp_samurai', hp: 92, dmg: 22, speed: 112, h: 170,
     reach: 64, windup: 0.34, recover: 0.4, loot: 120, kind: 'melee',
-    tint: '#7a6a5a', faction: 'jp' },
+    tint: '#4a8a7a', faction: 'jp' },
   jp_teppo_line: { name: '조총 3열대', sprite: 'jp_gunner', hp: 52, dmg: 20, speed: 40, h: 158,
     reach: 560, windup: 0.9, recover: 0.72, loot: 128, kind: 'ranged', proj: 'bullet',
-    volley: 2, tint: '#5a5a4a', faction: 'jp' },
+    volley: 2, tint: '#3f5c8a', faction: 'jp' },
   jp_banner: { name: '사시모노 기수', sprite: 'jp_ashigaru', hp: 86, dmg: 14, speed: 80, h: 166,
     reach: 70, windup: 0.5, recover: 0.5, loot: 150, kind: 'melee', rally: true,
     tint: '#a4503c', faction: 'jp' },
   jp_kisho: { name: '기습 결사대', sprite: 'jp_shinobi', hp: 74, dmg: 21, speed: 162, h: 156,
     reach: 50, windup: 0.2, recover: 0.28, loot: 175, kind: 'melee', blink: true,
-    tint: '#2f3540', faction: 'jp' },
-  jp_horo: { name: '호로 기마무사', sprite: 'jp_samurai', hp: 168, dmg: 30, speed: 128, h: 190,
-    reach: 82, windup: 0.46, recover: 0.62, loot: 300, kind: 'charger',
-    tint: '#8a4a5a', faction: 'jp' },
+    tint: '#8e2f2f', faction: 'jp' },
+  jp_horo: { name: '호로 기마무사', sprite: 'jp_horo', hp: 168, dmg: 30, speed: 128, h: 190,
+    reach: 82, windup: 0.46, recover: 0.62, loot: 300, kind: 'charger', faction: 'jp' },
 
   // ------------------------------------------------------------ Ming
   ming_forager: { name: '명군 징발병', sprite: 'qing_infantry', hp: 96, dmg: 18, speed: 82, h: 162,
@@ -384,7 +451,7 @@ export const ENEMIES = {
     tint: '#6a7a5a', faction: 'ming' },
   ming_north: { name: '북병 기마궁수', sprite: 'qing_cavalry', hp: 132, dmg: 24, speed: 134, h: 188,
     reach: 420, windup: 0.55, recover: 0.6, loot: 280, kind: 'ranged', proj: 'arrow',
-    tint: '#7a6a4a', faction: 'ming' },
+    tint: '#48709e', faction: 'ming' },
   ming_gunner: { name: '명군 화병', sprite: 'qing_archer', hp: 78, dmg: 30, speed: 50, h: 160,
     reach: 500, windup: 1.0, recover: 1.1, loot: 220, kind: 'ranged', proj: 'bullet',
     pierceArmor: true, tint: '#5a5a5a', faction: 'ming' },
@@ -397,19 +464,19 @@ export const ENEMIES = {
 
   // ------------------------------------------------------------ bosses
   boss_blacktiger: { name: '흑호 — 산적왕', sprite: 'boss_blacktiger', hp: 640, dmg: 26, speed: 86,
-    h: 230, reach: 96, windup: 0.62, recover: 0.62, loot: 1400, kind: 'boss', boss: true },
+    h: 230, reach: 96, windup: 0.62, recover: 0.62, loot: 600, kind: 'boss', boss: true },
   boss_tiger: { name: '산군 — 백두 대호', sprite: 'boss_tiger', hp: 900, dmg: 30, speed: 132,
-    h: 190, reach: 76, windup: 0.4, recover: 0.5, loot: 2200, kind: 'boss', boss: true },
-  boss_gunner: { name: '뎃포 대장 — 사가라', sprite: 'jp_gunner', hp: 1200, dmg: 34, speed: 78,
-    h: 200, reach: 560, windup: 0.8, recover: 0.9, loot: 3000, kind: 'boss', boss: true,
-    proj: 'bullet', tint: '#6a5a4a' },
+    h: 190, reach: 76, windup: 0.4, recover: 0.5, loot: 900, kind: 'boss', boss: true },
+  boss_gunner: { name: '뎃포 대장 — 사가라', sprite: 'boss_gunner', hp: 1200, dmg: 34, speed: 78,
+    h: 200, reach: 560, windup: 0.8, recover: 0.9, loot: 1100, kind: 'boss', boss: true,
+    proj: 'bullet' },
   boss_warlord: { name: '카게토라 — 왜장', sprite: 'boss_warlord', hp: 1450, dmg: 36, speed: 100,
-    h: 245, reach: 104, windup: 0.55, recover: 0.6, loot: 4200, kind: 'boss', boss: true },
-  boss_shinobi: { name: '그림자 — 이가의 두목', sprite: 'jp_shinobi', hp: 1300, dmg: 32, speed: 168,
-    h: 196, reach: 60, windup: 0.26, recover: 0.34, loot: 4600, kind: 'boss', boss: true,
-    blink: true, tint: '#2a2f38' },
+    h: 245, reach: 104, windup: 0.55, recover: 0.6, loot: 1500, kind: 'boss', boss: true },
+  boss_shinobi: { name: '그림자 — 이가의 두목', sprite: 'boss_shinobi', hp: 1300, dmg: 32, speed: 168,
+    h: 196, reach: 60, windup: 0.26, recover: 0.34, loot: 1600, kind: 'boss', boss: true,
+    blink: true },
   boss_ming: { name: '진린 휘하 — 부총병 모국기', sprite: 'boss_qing', hp: 2400, dmg: 44, speed: 106,
-    h: 250, reach: 112, windup: 0.5, recover: 0.58, loot: 9000, kind: 'boss', boss: true },
+    h: 250, reach: 112, windup: 0.5, recover: 0.58, loot: 2500, kind: 'boss', boss: true },
 };
 
 /**
@@ -495,6 +562,13 @@ export const WEATHER = {
   market: 'none',
   warehouse: 'none',
   shop_interior: 'none',
+  // 두 회차 전에 배경 넉 장을 새로 그리면서 이 표를 빠뜨렸다. 없으면 'none'
+  // 으로 떨어지므로 크래시도 경고도 없이 조용히 날씨가 사라진다 -- 얼어붙은
+  // 울산 길에 눈이 안 오고, 안개를 그려 넣은 백두 능선에 안개가 없었다.
+  ulsan_road: 'snow',
+  tiger_ridge: 'fog',
+  ming_camp: 'none',
+  waegwan_alley: 'rain',
 };
 
 /** Foreground silhouette strip per background, drawn in front of the fight. */
@@ -514,6 +588,12 @@ export const FOREGROUND = {
   village_night: 'fg_grass',
   market: 'fg_grass',
   warehouse: 'fg_debris',
+  ulsan_road: 'fg_pine',
+  ming_camp: 'fg_grass',
+  waegwan_alley: 'fg_debris',
+  tiger_ridge: 'fg_rock',
+  // Never had one: no stage used this plate until the road ambushes did.
+  shop_interior: 'fg_debris',
 };
 
 // ---------------------------------------------------------------- stages
@@ -525,7 +605,7 @@ export const STAGES = [
     brief: '아버지를 친 무리가 아직 뒷산에 머문다는 소문. 관은 움직이지 않는다.',
     after: '여섯 섬을 되찾았다. 마을 사람들이 처음으로 그를 이름으로 불렀다.',
     waves: [['bandit_grunt', 'bandit_grunt'], ['bandit_grunt', 'bandit_scout', 'bandit_grunt']],
-    reward: { money: 240, rice: 6, rep: 4 }, threatCut: 22 },
+    reward: { money: 110, rice: 6, rep: 4 }, threatCut: 22 },
 
   { id: 's2', ch: 2, name: '대나무 숲 매복', bg: 'bamboo', music: 'battle', region: 'jeonju', objective: 'escort',
     desc: '숲길에서 짐꾼들이 사라진다는 소문.',
@@ -533,7 +613,7 @@ export const STAGES = [
     after: '길이 열렸다. 전주에서 산 쌀을 한양까지 옮길 수 있게 되었다.',
     waves: [['bandit_grunt', 'bandit_archer'], ['bandit_axe', 'bandit_grunt', 'bandit_grunt'],
       ['bandit_scout', 'bandit_scout', 'bandit_archer']],
-    reward: { money: 520, rice: 12, rep: 6 }, threatCut: 26 },
+    reward: { money: 210, rice: 12, rep: 6 }, threatCut: 26 },
 
   { id: 's3', ch: 3, name: '굶주린 산짐승', bg: 'snow_ridge', music: 'battle', region: 'hanyang', objective: 'hold',
     desc: '눈 내린 고개에 짐승이 내려왔다.',
@@ -541,7 +621,7 @@ export const STAGES = [
     after: '고개가 조용해졌다. 겨울 장사가 가능해졌다.',
     waves: [['beast_wolf', 'beast_wolf'], ['beast_wolf', 'beast_boar'],
       ['beast_boar', 'beast_wolf', 'beast_wolf']],
-    reward: { money: 700, rice: 8, rep: 8 }, threatCut: 18 },
+    reward: { money: 260, rice: 8, rep: 8 }, threatCut: 18 },
 
   { id: 's4', ch: 4, name: '흑호의 산채', bg: 'fortress_gate', music: 'boss', region: 'jeonju',
     desc: '산적왕 흑호. 여기서 끝을 본다.',
@@ -549,7 +629,7 @@ export const STAGES = [
     after: '흑호가 쓰러졌다. 호남의 쌀길이 처음으로 온전히 뚫렸다.',
     waves: [['bandit_axe', 'bandit_archer'], ['bandit_brute', 'bandit_grunt', 'bandit_grunt'],
       ['boss_blacktiger']],
-    reward: { money: 2600, rice: 40, rep: 20 }, threatCut: 60, boss: true },
+    reward: { money: 880, rice: 40, rep: 20 }, threatCut: 60, boss: true },
 
   { id: 's5', ch: 5, name: '왜구 상륙', bg: 'coast', music: 'battle', region: 'dongnae',
     desc: '남쪽 바다에 검은 돛이 떴다.',
@@ -557,7 +637,7 @@ export const STAGES = [
     after: '첫 상륙은 막았다. 그러나 바다 건너에는 아직 배가 남아 있다.',
     waves: [['jp_ashigaru', 'jp_ashigaru'], ['jp_ashigaru', 'jp_gunner', 'jp_naginata'],
       ['jp_samurai', 'jp_ashigaru', 'jp_ashigaru']],
-    reward: { money: 1900, rice: 24, rep: 12 }, threatCut: 30 },
+    reward: { money: 580, rice: 24, rep: 12 }, threatCut: 30 },
 
   { id: 's6', ch: 6, name: '불타는 포구', bg: 'burning_village', music: 'battle', region: 'dongnae', objective: 'escort',
     desc: '창고가 타고 있다. 쌀부터 건져야 한다.',
@@ -565,14 +645,14 @@ export const STAGES = [
     after: '불길 속에서 예순 섬을 건졌다. 관이 아니라 상단이 백성을 먹였다.',
     waves: [['jp_shinobi', 'jp_ashigaru'], ['jp_gunner', 'jp_gunner', 'jp_naginata'],
       ['jp_samurai', 'jp_shinobi', 'jp_ashigaru', 'jp_ashigaru']],
-    reward: { money: 3100, rice: 60, rep: 16 }, threatCut: 34 },
+    reward: { money: 840, rice: 60, rep: 16 }, threatCut: 34 },
 
-  { id: 's7', ch: 7, name: '백두 대호', bg: 'bamboo', music: 'boss', region: 'pyongyang',
+  { id: 's7', ch: 7, name: '백두 대호', bg: 'tiger_ridge', music: 'boss', region: 'pyongyang',
     desc: '산군이 사람을 물었다. 마을이 산길을 못 쓴다.',
     brief: '산군이 사람을 물었다. 북쪽 교역로가 통째로 끊겼다.',
     after: '백두의 대호가 잠들었다. 평양 길이 다시 열렸다.',
     waves: [['beast_wolf', 'beast_wolf', 'beast_boar'], ['boss_tiger']],
-    reward: { money: 4200, rice: 20, rep: 26 }, threatCut: 45, boss: true },
+    reward: { money: 990, rice: 20, rep: 26 }, threatCut: 45, boss: true },
 
   { id: 's8', ch: 8, name: '왜장 카게토라', bg: 'fortress_yard', music: 'boss', region: 'dongnae',
     desc: '왜군 본진. 대장의 목을 치면 물러난다.',
@@ -580,7 +660,7 @@ export const STAGES = [
     after: '카게토라의 투구가 모래에 박혔다. 왜군이 물러간다.',
     waves: [['jp_samurai', 'jp_gunner'], ['jp_samurai', 'jp_naginata', 'jp_shinobi'],
       ['boss_warlord']],
-    reward: { money: 7800, rice: 90, rep: 34 }, threatCut: 70, boss: true },
+    reward: { money: 1580, rice: 90, rep: 34 }, threatCut: 70, boss: true },
 
   { id: 's9', ch: 9, name: '조령의 눈보라', bg: 'snow_ridge', music: 'battle', region: 'pyongyang', objective: 'hold',
     desc: '압록 너머에서 기병 소리가 들린다.',
@@ -588,7 +668,7 @@ export const STAGES = [
     after: '국경을 한 달 벌었다. 그 한 달에 도성의 곳간을 채워야 한다.',
     waves: [['ming_forager', 'ming_archer'], ['ming_pike', 'ming_forager', 'ming_shield'],
       ['ming_cavalry', 'ming_archer', 'ming_forager']],
-    reward: { money: 6400, rice: 40, rep: 20 }, threatCut: 30 },
+    reward: { money: 1080, rice: 40, rep: 20 }, threatCut: 30 },
 
   { id: 's10', ch: 10, name: '나루터 저지', bg: 'river_ford', music: 'battle', region: 'hanyang', objective: 'hold',
     desc: '여기를 내주면 도성까지 곧장이다.',
@@ -597,29 +677,29 @@ export const STAGES = [
     waves: [['ming_pike', 'ming_pike', 'ming_archer'],
       ['ming_cavalry', 'ming_shield', 'ming_forager'],
       ['ming_cavalry', 'ming_cavalry', 'ming_archer', 'ming_pike']],
-    reward: { money: 9500, rice: 70, rep: 28 }, threatCut: 40 },
+    reward: { money: 1280, rice: 70, rep: 28 }, threatCut: 40 },
 
-  { id: 's11', ch: 11, name: '울산 가는 길', bg: 'palace', music: 'boss', region: 'hanyang',
+  { id: 's11', ch: 11, name: '울산 가는 길', bg: 'ulsan_road', music: 'boss', region: 'hanyang',
     desc: '명 부총병 모국기. 울산으로 갈 군량이 걸렸다.',
     brief: '도산성을 치는 군사의 밥이다. 가로채려는 자가 명군 부총병이라는 것이 문제다.',
     after: '군량은 울산에 닿았다. 이제 남은 것은 장부뿐이다.',
     waves: [['ming_shield', 'ming_pike', 'ming_archer'],
       ['ming_cavalry', 'ming_cavalry', 'ming_forager', 'ming_forager'],
       ['boss_ming']],
-    reward: { money: 22000, rice: 200, rep: 60 }, threatCut: 90, boss: true, final: true },
+    reward: { money: 2770, rice: 200, rep: 60 }, threatCut: 90, boss: true, final: true },
 ];
 
 /** Ambush encounters rolled during a caravan run. */
 // Five later stages, added with the second-invasion rewrite. They use the two
 // new bosses and put the fall of Namwon on the map instead of in a caption.
 STAGES.push(
-  { id: 's12', ch: 5, name: '왜관 뒷골목', bg: 'market', music: 'battle', region: 'dongnae',
+  { id: 's12', ch: 5, name: '왜관 뒷골목', bg: 'waegwan_alley', music: 'battle', region: 'dongnae',
     desc: '은을 노린 낭인들이 왜관 뒤에 진을 쳤다.',
     brief: '화의가 깨지자 왜관에 남은 낭인들이 상단을 털기 시작했다.',
     after: '왜관 길이 다시 열렸다. 은줄이 끊기지 않았다.',
     waves: [['jp_ronin', 'jp_ronin'], ['jp_ronin', 'jp_kisho', 'jp_ashigaru'],
       ['jp_kisho', 'jp_kisho', 'jp_ronin']],
-    reward: { money: 2600, rice: 20, rep: 10 }, threatCut: 24 },
+    reward: { money: 790, rice: 20, rep: 10 }, threatCut: 24 },
 
   { id: 's13', ch: 6, name: '뎃포 대장 사가라', bg: 'fortress_gate', music: 'boss', region: 'dongnae',
     desc: '조총 삼백을 삼렬로 세운 자. 접근할 방법을 찾아야 한다.',
@@ -628,7 +708,7 @@ STAGES.push(
     waves: [['jp_teppo_line', 'jp_teppo_line', 'jp_yari'],
       ['jp_teppo_line', 'jp_banner', 'jp_yari', 'jp_yari'],
       ['boss_gunner']],
-    reward: { money: 6200, rice: 40, rep: 20 }, threatCut: 44, boss: true },
+    reward: { money: 1670, rice: 40, rep: 20 }, threatCut: 44, boss: true },
 
   { id: 's14', ch: 8, name: '남원성 서문', bg: 'fortress_yard', music: 'boss', region: 'jeonju',
     objective: 'hold',
@@ -638,7 +718,7 @@ STAGES.push(
     waves: [['jp_ashigaru', 'jp_yari', 'jp_naginata'],
       ['jp_samurai', 'jp_banner', 'jp_yari', 'jp_ashigaru'],
       ['jp_horo', 'jp_samurai', 'jp_naginata', 'jp_yari']],
-    reward: { money: 5400, rice: 30, rep: 34 }, threatCut: 30 },
+    reward: { money: 1090, rice: 30, rep: 34 }, threatCut: 30 },
 
   { id: 's15', ch: 9, name: '이가의 그림자', bg: 'village_night', music: 'boss', region: 'hanyang',
     desc: '밤마다 상단 사람이 하나씩 없어진다.',
@@ -646,9 +726,9 @@ STAGES.push(
     after: '그림자를 걷어 냈다. 밤길이 조금 안전해졌다.',
     waves: [['jp_shinobi', 'jp_kisho'], ['jp_kisho', 'jp_kisho', 'jp_shinobi'],
       ['boss_shinobi']],
-    reward: { money: 8800, rice: 40, rep: 26 }, threatCut: 50, boss: true },
+    reward: { money: 1480, rice: 40, rep: 26 }, threatCut: 50, boss: true },
 
-  { id: 's16', ch: 10, name: '명군 진영', bg: 'warehouse', music: 'battle', region: 'hanyang',
+  { id: 's16', ch: 10, name: '명군 진영', bg: 'ming_camp', music: 'battle', region: 'hanyang',
     objective: 'escort',
     desc: '빼앗긴 군량을 되찾아 온다. 상대는 우방이다.',
     brief: '명군 파총이 곳간을 통째로 가져갔다. 관은 모른 척한다. 직접 가는 수밖에.',
@@ -656,7 +736,7 @@ STAGES.push(
     waves: [['ming_forager', 'ming_forager', 'ming_pike'],
       ['ming_south', 'ming_heavy', 'ming_archer', 'ming_forager'],
       ['ming_officer', 'ming_north', 'ming_heavy', 'ming_pike']],
-    reward: { money: 11000, rice: 90, rep: 18 }, threatCut: 40 },
+    reward: { money: 1480, rice: 90, rep: 18 }, threatCut: 40 },
 
   // -- 추격. `target` is the one that runs; the waves are only what stands in
   // the way. Losing it fails the stage as surely as losing the cart does.
@@ -666,7 +746,7 @@ STAGES.push(
     brief: '털린 것은 쌀만이 아니었다. 누가 어디에 얼마를 맡겼는지 적힌 장부가 함께 없어졌다. 그게 남의 손에 있으면 다음에 털릴 집이 정해진다.',
     after: '장부를 되찾았다. 겉장에 이름 스물세 개가 적혀 있었고, 그중 열둘은 이미 빈집이었다.',
     waves: [['bandit_grunt', 'bandit_scout'], ['bandit_axe', 'bandit_grunt', 'bandit_scout']],
-    reward: { money: 900, rice: 12, rep: 6 }, threatCut: 18 },
+    reward: { money: 330, rice: 12, rep: 6 }, threatCut: 18 },
 
   { id: 's18', ch: 7, name: '왜의 전령', bg: 'coast', music: 'battle', region: 'dongnae',
     objective: 'hunt', target: 'jp_kisho',
@@ -675,7 +755,7 @@ STAGES.push(
     after: '소식은 하루 늦게 닿았다. 그 하루에 배 세 척이 뜨지 못했다고, 뒤에 들었다.',
     waves: [['jp_ashigaru', 'jp_yari'], ['jp_ashigaru', 'jp_naginata', 'jp_gunner'],
       ['jp_samurai', 'jp_ashigaru', 'jp_yari']],
-    reward: { money: 5200, rice: 30, rep: 12 }, threatCut: 26 },
+    reward: { money: 1230, rice: 30, rep: 12 }, threatCut: 26 },
 
   { id: 's19', ch: 10, name: '파총의 장부', bg: 'market', music: 'battle', region: 'hanyang',
     objective: 'hunt', target: 'ming_officer',
@@ -684,14 +764,40 @@ STAGES.push(
     after: '장부를 폈다. 우리 것이 저들의 군량으로 적혀 있었다. 그 장은 찢었다.',
     waves: [['ming_forager', 'ming_pike'], ['ming_shield', 'ming_forager', 'ming_archer'],
       ['ming_heavy', 'ming_north', 'ming_pike']],
-    reward: { money: 9800, rice: 70, rep: 15 }, threatCut: 34 },
+    reward: { money: 1320, rice: 70, rep: 15 }, threatCut: 34 },
 );
 
+/**
+ * What jumps a cart on the road between towns.
+ *
+ * There were four of these and they were drawn with a flat `pick`, so a
+ * two-year run of dozens of journeys saw the same four over and over -- and a
+ * trader in his first month could be jumped by an arquebus squad, because
+ * nothing said which of them belonged to which year of the war. `from` is the
+ * earliest chapter an ambush can appear in, so the road gets worse as the war
+ * does: hungry neighbours first, then deserters and rioters, then the Japanese,
+ * and finally the allies who were supposed to be helping.
+ */
 export const AMBUSHES = [
-  { bg: 'mountain_pass', waves: [['bandit_grunt', 'bandit_grunt'], ['bandit_archer', 'bandit_axe']] },
-  { bg: 'bamboo', waves: [['bandit_scout', 'bandit_scout', 'bandit_grunt']] },
-  { bg: 'river_ford', waves: [['bandit_grunt', 'bandit_archer'], ['bandit_brute']] },
-  { bg: 'harbor', waves: [['jp_ashigaru', 'jp_shinobi'], ['jp_gunner', 'jp_ashigaru']] },
+  // 제1~2장 — 굶은 이웃들. 아직 산적이라 부르기도 뭣한 자들.
+  { bg: 'mountain_pass', from: 1, waves: [['bandit_grunt', 'bandit_grunt'], ['bandit_archer', 'bandit_axe']] },
+  { bg: 'bamboo', from: 1, waves: [['bandit_scout', 'bandit_scout', 'bandit_grunt']] },
+  { bg: 'river_ford', from: 1, waves: [['bandit_grunt', 'bandit_archer'], ['bandit_brute']] },
+  { bg: 'village_day', from: 2, waves: [['bandit_torch', 'bandit_grunt', 'bandit_grunt'], ['bandit_chief']] },
+  { bg: 'shop_interior', from: 2, waves: [['bandit_slinger', 'bandit_grunt'], ['bandit_axe']] },
+
+  // 제3~5장 — 굶주림이 길게 가면 짐승도 사람도 사나워진다.
+  { bg: 'snow_ridge', from: 3, waves: [['beast_wolf', 'beast_wolf', 'beast_wolf'], ['beast_direwolf', 'beast_boar']] },
+  { bg: 'warehouse', from: 4, waves: [['deserter_spear', 'deserter_spear'], ['rebel_flail', 'deserter_spear']] },
+  { bg: 'market', from: 5, waves: [['rebel_flail', 'rebel_flail', 'bandit_slinger'], ['bandit_chief', 'bandit_brute']] },
+
+  // 제5~7장 — 정유재란. 바다가 넘어간 뒤로는 길에도 왜군이 있다.
+  { bg: 'harbor', from: 5, waves: [['jp_ashigaru', 'jp_shinobi'], ['jp_gunner', 'jp_ashigaru']] },
+  { bg: 'village_night', from: 6, waves: [['jp_shinobi', 'jp_kisho'], ['jp_kisho', 'jp_kisho']] },
+  { bg: 'coast', from: 7, waves: [['jp_yari', 'jp_yari'], ['jp_ronin', 'jp_banner']] },
+
+  // 제9장 이후 — 구원군이 상단을 세운다. 문서는 없다.
+  { bg: 'palace', from: 9, waves: [['ming_forager', 'ming_forager'], ['ming_officer', 'ming_pike']] },
 ];
 
 // ------------------------------------------------------------- contracts
@@ -791,7 +897,7 @@ export const STORY = {
     { who: '객주', npc: 'npc_broker', t: '“다만 알아 두게. 요즘 길에는 산적보다 탈영병이 많아.”' },
   ] },
 
-  3: { cut: 'cut_ashes', title: '제3장 · 굶는 해', music: 'sad', lines: [
+  3: { cut: 'cut_famine', title: '제3장 · 굶는 해', music: 'sad', lines: [
     { who: '', t: '병신년. 화의는 길어지고, 들녘은 삼 년째 제대로 여물지 않았다.' },
     { who: '선비', npc: 'npc_scholar', t: '“명군 십만이 이 땅에서 먹고 자네. 그 밥이 어디서 나오겠나.”' },
     { who: '어사', npc: 'npc_inspector', t: '“훈련도감이 군량을 찾는다. 값은 쳐주지. 문서로.”' },
@@ -812,7 +918,7 @@ export const STORY = {
     { who: '객주', npc: 'npc_broker', t: '“전라도라니. 자네 고향 아닌가.”' },
   ] },
 
-  6: { cut: 'cut_landing', title: '제6장 · 통제사를 가두다', music: 'sad', lines: [
+  6: { cut: 'cut_yi_arrest', title: '제6장 · 통제사를 가두다', music: 'sad', lines: [
     { who: '', t: '정유년 이월. 삼도수군통제사가 잡혀 한양으로 끌려갔다.' },
     { who: '선비', npc: 'npc_scholar', t: '“싸우지 않았다는 죄라네. 가서 죽으라는 명을 듣지 않았다고.”' },
     { who: '뱃사공', npc: 'npc_caravan', t: '“바다를 아는 사람이 없어졌소. 이제 뱃길로는 쌀 한 섬 못 보내오.”' },
@@ -826,7 +932,7 @@ export const STORY = {
     { who: '덕수', npc: null, t: '“…남원으로 갑니다. 거기 제 누이가 있소.”' },
   ] },
 
-  8: { cut: 'cut_ashes', title: '제8장 · 남원', music: 'boss', lines: [
+  8: { cut: 'cut_namwon', title: '제8장 · 남원', music: 'boss', lines: [
     { who: '', t: '정유년 팔월. 왜군 오만이 남원성을 에워쌌다. 성안에는 조명 연합군 사천.' },
     { who: '', t: '사흘을 버텼다. 나흘째 새벽, 성이 열렸다.' },
     { who: '', t: '그가 태어난 마을이 그 성 안에 있었다.' },
@@ -834,7 +940,7 @@ export const STORY = {
     { who: '객주', npc: 'npc_broker', t: '“말을 아끼게. 지금은 우는 것도 사치야.”' },
   ] },
 
-  9: { cut: 'cut_seabattle', title: '제9장 · 명량', music: 'town', lines: [
+  9: { cut: 'cut_myeongnyang', title: '제9장 · 명량', music: 'town', lines: [
     { who: '', t: '정유년 구월 십육일. 울돌목.' },
     { who: '', t: '풀려나 백의로 돌아온 이가 남은 배 열두 척으로 물길을 막았다.' },
     { who: '역관', npc: 'npc_interpreter', t: '“…이겼답니다. 열두 척으로 이겼답니다.”' },
@@ -849,7 +955,7 @@ export const STORY = {
     { who: '덕수', npc: null, t: '“구하러 온 사람이 내 쌀을 가져가면, 그건 뭐라고 불러야 합니까.”' },
   ] },
 
-  11: { cut: 'cut_caravan', title: '제11장 · 마지막 길', music: 'boss', lines: [
+  11: { cut: 'cut_ulsan_block', title: '제11장 · 마지막 길', music: 'boss', lines: [
     { who: '', t: '겨울. 수백 대의 수레가 울산으로 향했다. 도산성을 치는 군사의 밥이었다.' },
     { who: '', t: '앞을 막은 것은 왜군이 아니라, 군량을 가로채려는 명군 부총병의 사병이었다.' },
     { who: '모국기', npc: null, t: '“그 쌀은 우리 군의 것이다. 내려놓고 가라.”' },
@@ -870,28 +976,28 @@ export const ENDINGS = {
     text: '전쟁을 끝낸 것도 그였고, 팔도의 쌀길을 쥔 것도 그였다.\n' +
       '사람들은 그를 미곡대인이라 불렀다.\n' +
       '남원의 잿더미를 기억하는 이는 이제 그뿐이었다.' },
-  righteous: { cut: 'cut_seabattle', title: '의로운 상인', music: 'town',
+  righteous: { cut: 'cut_end_righteous', title: '의로운 상인', music: 'town',
     cond: '전란은 끝냈으나 재산은 목표에 못 미침',
     text: '그는 끝내 거상이 되지 못했다.\n' +
       '다만 그가 지킨 길로 쌀이 흘렀고, 그 겨울에 굶어 죽은 이가 없었다.\n' +
       '장부에 적히지 않는 것도 있다.' },
-  magnate: { cut: 'cut_caravan', title: '거상', music: 'win',
+  magnate: { cut: 'cut_end_magnate', title: '거상', music: 'win',
     cond: '순자산 50,000냥 달성, 전란은 미완',
     text: '그의 수레는 팔도를 덮었고 곳간은 넘쳤다.\n' +
       '다만 국경의 봉화는 여전히 타올랐고,\n' +
       '그는 그것을 남의 일이라 여기기로 했다.' },
-  merchant: { cut: 'cut_shopopen', title: '고을 상인', music: 'town',
+  merchant: { cut: 'cut_end_merchant', title: '고을 상인', music: 'town',
     cond: '두 조건 모두 미달',
     text: '거상도 장수도 되지 못했다.\n' +
       '다만 그의 쌀집 앞에는 늘 줄이 있었고,\n' +
       '그 줄에 굶는 사람은 없었다.' },
-  musin: { cut: 'cut_blacktiger', title: '스물넉 가지', music: 'town',
+  musin: { cut: 'cut_end_musin', title: '스물넉 가지', music: 'town',
     cond: '무기 여섯 자루를 숙련까지 — 전란도 재산도 미완',
     text: '곳간은 늘 반쯤 비어 있었고 장부는 끝내 두꺼워지지 않았다.\n' +
       '다만 그가 손에 익힌 자루가 여섯이었다. 하나를 익히는 동안\n' +
       '남들은 그 값으로 더 좋은 칼을 샀다는 것을 그도 알고 있었다.\n' +
       '뒷날 어느 군영에서 무예를 가르친 이가 남원 사람이었다고만 전한다.' },
-  ruin: { cut: 'cut_ashes', title: '파산', music: 'sad',
+  ruin: { cut: 'cut_end_ruin', title: '파산', music: 'sad',
     cond: '부채 20,000냥 초과 · 순자산 -3,000냥 미만',
     text: '장부는 붉은 글씨로 가득 찼다.\n' +
       '칼로 지킨 쌀을, 숫자가 앗아갔다.' },
@@ -933,6 +1039,14 @@ export const SKILLS = [
   { id: 'hwagong', name: '화공', icon: 'sk_fire', cost: 9200, stam: 32, cd: 13,
     desc: '기름을 끼얹고 불을 붙인다',
     detail: '반경 170 · 6초 지속 · 0.45초마다 0.55배' },
+  // 이 판에 없던 두 가지 — 적을 끌어당기는 것과, 깊이 축을 방어에 쓰는 것.
+  // 아홉 가지가 전부 「내가 앞으로 나가서 때린다」였다.
+  { id: 'hook', name: '갈고리', icon: 'sk_hook', cost: 5600, stam: 26, cd: 8,
+    desc: '던져 걸고 끌어당긴다',
+    detail: '전방 380 · 세 명을 품으로 끌어온다 · 끌린 적은 0.6초 휘청인다' },
+  { id: 'smoke', name: '연막', icon: 'sk_smoke', cost: 6800, stam: 24, cd: 10,
+    desc: '연기를 터뜨리고 줄을 옮긴다',
+    detail: '1.1초 무적 · 다른 줄로 빠진다 · 주변 적의 겨냥이 풀린다' },
   { id: 'geumchang', name: '금창약', icon: 'sk_salve', cost: 7800, stam: 18, cd: 22,
     desc: '상처에 약을 바르고 숨을 고른다',
     detail: '체력 30% 회복 · 기력 +20 · 1.6초간 피해 감소' },

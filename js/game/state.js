@@ -4,7 +4,7 @@ import {
   CITIES, GOODS, WEAPONS, ARMORS, UPGRADES, STAGES, RICE_SEASON,
   SKILLS, CONSUMABLES, TRINKETS, CONTRACT_PATRONS, FLOWS, COVER_MONTHS, RIVALS,
 } from '../data/gamedata.js';
-import { MASTERY } from '../data/features.js';
+import { MASTERY, CREW, PERKS, TITLES } from '../data/features.js';
 import { TREASURES, wornMod, MAX_WORN } from '../data/treasures.js';
 import {
   RANKS, rankOf, rankPerks, LOYALTY, RELATION, relTier, DEVELOP, RESOURCES,
@@ -220,17 +220,17 @@ export const equippedSkills = () => (S.equipSkills || []).map(skill);
 export const DIFFICULTIES = {
   easy: {
     id: 'easy', name: '순탄', enemyDmg: 0.7, enemyHp: 0.85, upkeep: 0.8, ambush: 0.75,
-    loyalty: 0.6, stratagem: 1.15, relation: 0.7, apBonus: 1,
+    loyalty: 0.6, stratagem: 1.15, relation: 0.7, apBonus: 1, mishap: 0.65,
     desc: '적이 약하고 살림이 가볍다 · 사람이 잘 떠나지 않는다',
   },
   normal: {
     id: 'normal', name: '평이', enemyDmg: 1, enemyHp: 1, upkeep: 1, ambush: 1,
-    loyalty: 1, stratagem: 1, relation: 1, apBonus: 0,
+    loyalty: 1, stratagem: 1, relation: 1, apBonus: 0, mishap: 1,
     desc: '설계된 그대로',
   },
   hard: {
     id: 'hard', name: '혹독', enemyDmg: 1.35, enemyHp: 1.25, upkeep: 1.25, ambush: 1.3,
-    loyalty: 1.5, stratagem: 0.85, relation: 1.35, apBonus: 0,
+    loyalty: 1.5, stratagem: 0.85, relation: 1.35, apBonus: 0, mishap: 1.6,
     desc: '한 번의 실수가 한 달을 무너뜨린다 · 사람도 인심도 빨리 식는다',
   },
 };
@@ -248,8 +248,17 @@ export function logPrices() {
 
 export const cityUnlocked = (c) => S.chapter >= c.unlock;
 
-/** Warehouse limit grows with the 창고 증축 upgrade. */
-export const capacity = () => 60 + upLevel('warehouse') * 60;
+/**
+ * How much the house can hold and move at once.
+ *
+ * 우마차 is sold in the hub as "운송량 +40섬 · 운송비 -10%" and for a long time
+ * only the second half of that existed: `upLevel('cart')` was read in exactly
+ * one place, the travel-cost discount, and the hold it promised was never
+ * added anywhere. Four levels cost about 18,700냥 and bought a hundred and
+ * sixty 섬 of capacity that the game never gave.
+ */
+export const capacity = () => 60 + upLevel('warehouse') * 60 + upLevel('cart') * 40
+  + rosterMod('cap') + treasureMod('cap');
 
 /** Bulk-weighted units currently stored. */
 export function stored() {
@@ -264,7 +273,46 @@ export function stockValue() {
   return v;
 }
 
-export const netWorth = () => S.money + stockValue() - S.debt;
+/**
+ * What the house is worth if it were wound up today.
+ *
+ * 순자산 means net *assets*, and for a long time it counted only coin and the
+ * goods on the cart -- so the warehouse he built, the ox-carts, the armour on
+ * his back and every 보패 he ever found were worth nothing at all, and the
+ * money spent on them was simply gone from the score the run is judged by.
+ *
+ * That made the whole 상단 확장 half of the game score-negative, and it
+ * inverted everything downstream: measured over three hundred runs, a merchant
+ * who spent a third of what he could afford ended richer than one who spent it
+ * all, and one who bought upgrades ended poorer than one who bought none
+ * (9,239냥 against 12,345). Being poor scored better than being equipped.
+ *
+ * Fixed things are counted at what they would fetch second-hand rather than at
+ * what they cost, so building is still a decision and not a free store of
+ * value -- a warehouse is worth having, and worth less than the coin that
+ * built it.
+ */
+const RESALE = 0.6;
+
+export function fixedAssets() {
+  let v = 0;
+  for (const u of UPGRADES) {
+    // Each level cost cost * scale^(level-1); sum what was actually paid.
+    for (let lv = 0; lv < (S.upgrades?.[u.id] || 0); lv += 1) {
+      v += u.cost * Math.pow(u.scale, lv);
+    }
+  }
+  for (const id of S.ownedWeapons || []) {
+    v += (WEAPONS.find((w) => w.id === id)?.cost) || 0;
+  }
+  v += ARMORS.slice(1, (S.armor || 0) + 1).reduce((n, a) => n + a.cost, 0);
+  // 보패 are found rather than bought and carry no price, so there is nothing
+  // to value them at. Left out deliberately rather than added as a clause that
+  // would always contribute zero.
+  return Math.round(v * RESALE);
+}
+
+export const netWorth = () => S.money + stockValue() + fixedAssets() - S.debt;
 
 export const monthLabel = (m = S.month) => {
   const startMonth = 8;               // index 8 == 9월
@@ -278,7 +326,7 @@ export const monthIndex = (m = S.month) => (8 + m) % 12;
 
 export const playerMaxHp = () =>
   ARMORS[S.armor].hp + Math.floor(S.rep * 0.6) + upLevel('guard') * 10
-  + trinketMod('hp') + treasureMod('hp');
+  + trinketMod('hp') + treasureMod('hp') + rosterMod('hp');
 
 /** Total attack multiplier from gear and trinkets. */
 /**
@@ -360,6 +408,53 @@ export function spendRes(need) {
   return true;
 }
 
+/**
+ * Summed modifier across hired crew, worn title and bought perks.
+ *
+ * It used to live in economy.js, which meant state.js could not reach it --
+ * economy imports state, so the arrow only goes one way. That is why the whole
+ * roster layer was inert: `capacity`, `attackMul`, `playerMaxHp` and `priceOf`
+ * all live here and simply had no way to ask. Two keys of the fifteen were
+ * wired, both from economy's own side; the other thirteen were paid for and
+ * never delivered. Forty crew on monthly wages, thirty 도가 특성 at up to
+ * 22,000냥 each, thirty titles earned through deeds -- all of it decoration.
+ */
+export function rosterMod(key) {
+  let n = 0;
+  for (const id of S.crew || []) {
+    const c = CREW.find((x) => x.id === id);
+    if (c && c.mod[key]) n += c.mod[key];
+  }
+  for (const id of S.perks || []) {
+    const p = PERKS.find((x) => x.id === id);
+    if (p && p.mod[key]) n += p.mod[key];
+  }
+  const t = TITLES.find((x) => x.id === S.title);
+  if (t && t.mod[key]) n += t.mod[key];
+  return n;
+}
+
+/**
+ * The counters the achievements watch.
+ *
+ * These lived in economy.js, which the battle scene cannot import -- economy
+ * imports state, and the arrow only goes one way. So every counter that a
+ * *fight* produces had nowhere to be written: parries, crits, juggles, plunges,
+ * elites, kills by weapon class. Twenty-nine of the eighty-five deeds watched a
+ * number nobody could increment, and eleven titles sat behind those deeds.
+ * Same shape as the roster layer, same fix.
+ */
+export function bump(key, by = 1) {
+  S.tally = S.tally || {};
+  S.tally[key] = (S.tally[key] || 0) + by;
+}
+
+/** Record a high-water mark rather than a running total. */
+export function peak(key, value) {
+  S.tally = S.tally || {};
+  if (value > (S.tally[key] || 0)) S.tally[key] = value;
+}
+
 export const worn = () => S.wornTreasures || [];
 export const treasureMod = (key) => wornMod(worn(), key);
 export const canWear = () => worn().length < MAX_WORN;
@@ -367,7 +462,8 @@ export const ownsTreasure = (id) => (S.treasures || []).includes(id);
 
 /** Total attack multiplier from gear, trinkets and treasures. */
 export const attackMul = () =>
-  1 + upLevel('guard') * 0.03 + trinketMod('dmg') + treasureMod('dmg');
+  1 + upLevel('guard') * 0.03 + trinketMod('dmg') + treasureMod('dmg')
+  + rosterMod('dmg');
 
 export function stageUnlocked(st) {
   if (S.cleared[st.id]) return false;
@@ -517,15 +613,28 @@ export const heldBy = (cityId) => S.holders?.[cityId] || 'joseon';
 // both ends, which is the difference between a clerk and a swordsman on wages.
 const polEdge = () => (bestStat('pol') - 55) * 0.0012;
 
+/**
+ * 철장사(p_seasonal)의 몫.
+ *
+ * 「season 0.15」를 단 항목은 도가 특성 하나뿐이고, 그 키를 읽는 코드가
+ * 없었다. 설명이 「철을 미리 읽고 쟁여 둔다」이므로, 철이 값을 밀어내는
+ * 만큼 그 방향으로 한 뼘 더 받는다 -- 흔할 때 더 싸게 사고, 귀할 때 더
+ * 비싸게 판다. 철이 없는 물목(비단·인삼·한지 따위)에는 0이다.
+ */
+export const seasonEdge = (goodId) =>
+  rosterMod('season') * (seasonFactor(goodId, monthIndex()) - 1);
+
 export const buyPrice = (cityId, goodId) =>
   Math.max(1, Math.round(priceOf(cityId, goodId)
-    * (1.06 - upLevel('ledger') * 0.02 + trinketMod('buy') - polEdge())));
+    * (1.06 - upLevel('ledger') * 0.02 + trinketMod('buy') - polEdge()
+      + rosterMod('buy') + treasureMod('buy') - seasonEdge(goodId))));
 
 export const sellPrice = (cityId, goodId) =>
   Math.max(1, Math.round(priceOf(cityId, goodId)
     * (0.96 + upLevel('mill') * 0.017 + trinketMod('sell')
       + polEdge() + devLevel(cityId, 'market') * 0.03
-      + perks().sell)));
+      + perks().sell + rosterMod('sell') + treasureMod('sell')
+      + seasonEdge(goodId))));
 
 /** Trading against a thin market moves it: buying lifts, selling depresses. */
 /**

@@ -17,7 +17,8 @@ import {
   makes, eats, marketStock, moveStock, coverTarget, scarcity, monthIndex,
   treasureMod, officer, bestStat, devLevel, relation, relationTier,
   res, addRes, spendRes, rank, perks, writeLegacy, heldBy,
-  readCareer, bankCareer, ownsWeapon, masteredCount,
+  readCareer, bankCareer, ownsWeapon, masteredCount, rosterMod, bump, peak,
+  seasonFactor,
   cityUnlocked, nextStage,
   GOAL_WORTH, MAX_MONTHS, AP_PER_MONTH, MARTIAL_ENDING_AT,
 } from './state.js';
@@ -27,36 +28,133 @@ import { setFlag } from './story.js';
 
 // ------------------------------------------------------------- trading
 
+/**
+ * The most of a town's supply one visit may take.
+ *
+ * `bulk` lets a cart hold three hundred 근 of 인삼. A town holds sixteen. So
+ * the hold was never the binding constraint on the thin, dear goods -- you
+ * could buy a market out nineteen times over, and the ledger let you. Half is
+ * already a hard morning's buying; the rest of the town has to eat too.
+ */
+const MARKET_SHARE = 0.5;
+
 export function maxBuyable(goodId) {
   const g = good(goodId);
   const byMoney = Math.floor(S.money / buyPrice(S.city, goodId));
   const bySpace = Math.floor((capacity() - stored()) / g.bulk);
-  return Math.max(0, Math.min(byMoney, bySpace));
+  const byTown = Math.floor(marketStock(S.city, goodId) * MARKET_SHARE);
+  return Math.max(0, Math.min(byMoney, bySpace, byTown));
+}
+
+/**
+ * How many bites a lot is taken in when it is filled.
+ *
+ * The market impact was always modelled -- `applyImpact` moves the town's stock
+ * and its sentiment -- but it was applied *after* the whole lot had been priced.
+ * So a hundred and twenty 근 of 약재 were bought at the price the first 근 would
+ * have fetched, and the town only noticed once the cart had left. The same
+ * again at the far end. That is a market with no slippage in it at all, and it
+ * is why a merchant who did nothing but carry the obvious good between two
+ * towns turned 1,200냥 into two point nine million: every trip captured the
+ * entire spread on every unit.
+ *
+ * Eight bites is enough that a full cart visibly walks the price against you
+ * and cheap enough to run on every trade.
+ */
+const FILL_BITES = 8;
+
+/**
+ * Walk an order through its own impact, a bite at a time.
+ *
+ * Returns what was actually filled and what it came to -- the two can fall
+ * short of the ask, because the price moves while you are still trading and a
+ * purse that covered the first bite may not cover the last.
+ */
+/**
+ * How far the price may walk before the trade stops itself.
+ *
+ * Modelling the impact was right and stopping there was not. With the fill
+ * walking the price and nothing calling a halt, the best thing a merchant
+ * could do was *not* fill his cart: a hundred and eighty 섬 of rice returned
+ * 186냥 where ninety returned 1,063, because the last bites were bought high
+ * and sold into a floor his own selling had made. That inverted everything
+ * downstream -- a poorer house out-earned a richer one, and 혹독 out-earned
+ * 평이, because both were forced to trade smaller.
+ *
+ * A merchant does not keep buying into a market he is visibly moving. Neither
+ * does this: once the price has run a quarter against him, the rest of the
+ * order simply does not fill.
+ */
+const WALK_LIMIT = 0.25;
+
+function fill(goodId, want, side) {
+  const bite = Math.max(1, Math.floor(want / FILL_BITES));
+  const opening = side === 'buy' ? buyPrice(S.city, goodId) : sellPrice(S.city, goodId);
+  let done = 0;
+  let total = 0;
+  while (done < want) {
+    const n = Math.min(bite, want - done);
+    const px = side === 'buy' ? buyPrice(S.city, goodId) : sellPrice(S.city, goodId);
+    if (side === 'buy' && px * n > S.money - total) break;
+    // Walked too far: stop rather than keep paying up (or keep dumping down).
+    const walked = side === 'buy' ? px / opening - 1 : 1 - px / opening;
+    if (done > 0 && walked > WALK_LIMIT) break;
+    total += px * n;
+    done += n;
+    applyImpact(S.city, goodId, side === 'buy' ? n : -n);
+  }
+  return { qty: done, sum: Math.round(total) };
+}
+
+/**
+ * Was this a good moment, judged against the twelve readings the ledger keeps?
+ *
+ * 「바닥에서 샀다」 and 「철을 읽는다」 both count timing, and both watched a
+ * number nothing wrote. The price log was already being kept for the graph on
+ * the market screen; this reads it back.
+ */
+function timedWell(goodId, side) {
+  const log = (S.priceLog && S.priceLog[goodId]) || [];
+  if (log.length < 4) return false;
+  const now = priceOf(S.city, goodId);
+  const lo = Math.min(...log);
+  const hi = Math.max(...log);
+  if (hi - lo < lo * 0.08) return false;          // a flat stretch is not timing
+  return side === 'buy' ? now <= lo + (hi - lo) * 0.2 : now >= hi - (hi - lo) * 0.2;
 }
 
 export function buy(goodId, qty) {
   qty = Math.min(qty, maxBuyable(goodId));
   if (qty <= 0) return 0;
-  const cost = buyPrice(S.city, goodId) * qty;
+  // Judged before the fill. `timedWell` reads the price now, and filling walks
+  // it -- so asking afterwards asks about the price your own order just made,
+  // which is never the price you decided on.
+  const wellTimed = timedWell(goodId, 'buy');
+  const { qty: got, sum: cost } = fill(goodId, qty, 'buy');
+  if (got <= 0) return 0;
+  if (got >= 10 && wellTimed) bump('bottomBuys');
   S.money -= cost;
-  S.stock[goodId] += qty;
-  applyImpact(S.city, goodId, qty);
-  S.stats.traded += qty;
-  addLog(`${city().name}에서 ${good(goodId).name} ${qty}${good(goodId).unit} 매입 — ${won(cost)}냥`, 'buy');
-  return qty;
+  S.stock[goodId] += got;
+  S.stats.traded += got;
+  addLog(`${city().name}에서 ${good(goodId).name} ${got}${good(goodId).unit} 매입 — ${won(cost)}냥`, 'buy');
+  return got;
 }
 
 export function sell(goodId, qty) {
   qty = Math.min(qty, S.stock[goodId]);
   if (qty <= 0) return 0;
-  const gain = sellPrice(S.city, goodId) * qty;
+  // 철장사: 철이 값을 밀어 올린 때에 판 것만 센다. 매입과 같은 이유로
+  // 체결 전에 본다 -- 다 팔고 나서 보면 내가 눌러 놓은 값을 보게 된다.
+  const rodeSeason = timedWell(goodId, 'sell') && seasonFactor(goodId, monthIndex()) > 1.05;
+  const { qty: got, sum: gain } = fill(goodId, qty, 'sell');
+  if (got <= 0) return 0;
+  if (got >= 10 && rodeSeason) bump('seasonWins');
   S.money += gain;
-  S.stock[goodId] -= qty;
-  applyImpact(S.city, goodId, -qty);
-  S.stats.traded += qty;
+  S.stock[goodId] -= got;
+  S.stats.traded += got;
   S.stats.bestDeal = Math.max(S.stats.bestDeal, gain);
-  addLog(`${city().name}에서 ${good(goodId).name} ${qty}${good(goodId).unit} 매도 — ${won(gain)}냥`, 'sell');
-  return qty;
+  addLog(`${city().name}에서 ${good(goodId).name} ${got}${good(goodId).unit} 매도 — ${won(gain)}냥`, 'sell');
+  return got;
 }
 
 // -------------------------------------------------------------- travel
@@ -79,7 +177,28 @@ export function ambushChance(toId) {
   const t = ((S.threat[S.city] || 0) + (S.threat[toId] || 0)) / 2;
   const cargo = stored() / Math.max(1, capacity());
   const base = t / 100 * 0.42 + cargo * 0.10;
-  return clamp(base * diff().ambush - upLevel('guard') * 0.13, 0.02, 0.55);
+  // 호위 다섯, 길잡이 둘, 척후망과 끄나풀 -- 여덟 갈래가 「습격 확률 -n」을
+  // 약속하고 아무것도 하지 않고 있었다. treasureMod는 이미 붙어 있었다.
+  //
+  // 곱으로 넣는다. 이 숫자들은 읽는 사람이 없던 시절에 적힌 것이라 한 명이
+  // -0.10~-0.16 씩인데, 그대로 빼면 호위 둘만 붙여도 확률이 바닥(2%)에
+  // 눌러앉아 길 위의 습격 열두 가지가 통째로 사라진다. 비율로 깎으면 호위는
+  // 여전히 값을 하되 길이 안전해지지는 않는다.
+  const watch = clamp(rosterMod('ambush') + treasureMod('ambush'), -0.85, 0.5);
+  return clamp(base * diff().ambush * (1 + watch) - upLevel('guard') * 0.13, 0.02, 0.55);
+}
+
+/**
+ * The ambushes that belong to the year the run has reached.
+ *
+ * The pick used to be flat across the whole table, so a trader in his first
+ * month -- before the Japanese had landed again, before anyone had deserted --
+ * could be jumped on the road by an arquebus squad. Chapter one always keeps
+ * at least the three that open the table, so this can never return empty.
+ */
+export function roadThreats() {
+  const ch = S.chapter || 1;
+  return AMBUSHES.filter((a) => (a.from || 1) <= ch);
 }
 
 /**
@@ -96,19 +215,25 @@ export function travel(toId) {
   const jumped = chance(ambushChance(toId));
   S.city = toId;
   addLog(`${city(toId).name}로 이동 — 운송비 ${won(cost)}냥`, 'move');
-  return { ok: true, ambush: jumped ? pick(AMBUSHES) : null };
+  return { ok: true, ambush: jumped ? pick(roadThreats()) : null };
 }
 
 /** Cargo lost when an ambush is not survived. */
 export function loseCargo(fraction = 0.25) {
+  // 혹독의 카드에는 「한 번의 실수가 한 달을 무너뜨린다」고 적혀 있는데,
+  // 난이도가 건드리던 것은 실수의 **빈도**뿐이었다. 습격당하는 횟수는 한
+  // 회차에 4.4번에서 7.7번으로 늘지만 한 번에 잃는 몫은 어느 난이도에서나
+  // 똑같았다. 이제 값도 같이 오른다.
+  const bite = clamp(fraction * (diff().mishap || 1), 0.05, 0.6);
   let lost = 0;
   for (const g of GOODS) {
-    const n = Math.floor(S.stock[g.id] * fraction);
+    const n = Math.floor(S.stock[g.id] * bite);
     S.stock[g.id] -= n;
     lost += n;
   }
-  const coin = Math.floor(S.money * fraction * 0.35);
+  const coin = Math.floor(S.money * bite * 0.35);
   S.money -= coin;
+  S.lostCargoThisMonth = true;
   addLog(`습격으로 화물 ${lost}단위와 ${won(coin)}냥을 잃었다.`, 'bad');
   return { lost, coin };
 }
@@ -185,6 +310,8 @@ export function deliverContract(c) {
   S.money += c.pay - (c.advance || 0);   // the advance was paid on signing
   addRep(c.rep);
   S.contractsDone += 1;
+  // 「한 건도 어기지 않았다」는 연속 기록이다. 어긴 적이 있으면 0에서 다시.
+  if (!S.contractsFailed) bump('cleanContracts');
   S.rel[c.patron] = clamp((S.rel[c.patron] || 0) + 6, 0, 100);
   // Contracts are also where strategic resources come from -- patrons pay part
   // of a large order in horses, iron or powder rather than coin.
@@ -207,11 +334,17 @@ export function deliverContract(c) {
 function expireContracts() {
   const late = S.contracts.filter((c) => S.month > c.due);
   for (const c of late) {
-    // Failing costs the penalty and the advance you were fronted.
-    const owed = c.penalty + (c.advance || 0);
-    S.money -= Math.min(owed, Math.max(0, S.money) + 800);
+    // Failing costs the penalty and the advance you were fronted, and on 혹독
+    // it costs more of both. The 800 cushion below is what keeps a bad month
+    // from being unrecoverable; on 혹독 that cushion is thin, which is the
+    // whole difference the card is promising.
+    const bite = diff().mishap || 1;
+    const owed = Math.round((c.penalty + (c.advance || 0)) * bite);
+    S.money -= Math.min(owed, Math.max(0, S.money) + Math.round(800 / bite));
     addRep(-3);
     S.contractsFailed += 1;
+    S.tally = S.tally || {};
+    S.tally.cleanContracts = 0;
     S.rel[c.patron] = clamp((S.rel[c.patron] || 0) - 14, 0, 100);
     addLog(`${c.patronName} 납기 초과 — 위약금 ${won(owed)}냥, 평판 -3`, 'bad');
   }
@@ -549,18 +682,6 @@ export function chooseOption(index) {
 
 // ------------------------------------------------------------ deeds
 
-/** Increment one of the counters the achievements watch. */
-export function bump(key, by = 1) {
-  S.tally = S.tally || {};
-  S.tally[key] = (S.tally[key] || 0) + by;
-}
-
-/** Record a high-water mark rather than a running total. */
-export function peak(key, value) {
-  S.tally = S.tally || {};
-  if (value > (S.tally[key] || 0)) S.tally[key] = value;
-}
-
 /** Every counter a deed can be written against, resolved on demand. */
 function counters() {
   const t = S.tally || {};
@@ -629,7 +750,12 @@ export function rollTreasure(stage) {
   );
   if (!pool.length) return null;
   // A boss stage is roughly three times as likely to give one up.
-  const mul = stage && stage.reward && stage.reward.money > 1500 ? 3 : 1;
+  //
+  // 「보스 전장인가」를 돈 보수로 어림잡고 있었다 -- money > 1500. 보수를
+  // 조정하는 순간 흑호와 백두 대호가 조용히 보스 대우를 잃었고, 아무 검사도
+  // 그것을 보지 못했다. 물어야 할 것은 값이 아니라 보스가 있느냐다.
+  const mul = stage && (stage.waves || []).flat()
+    .some((id) => ENEMIES[id] && ENEMIES[id].boss) ? 3 : 1;
   for (const t of pool.sort(() => Math.random() - 0.5)) {
     if (chance(odds[t.rarity] * mul)) {
       owned.push(t.id);
@@ -668,21 +794,6 @@ export function dismissCrew(id) {
   S.crew = (S.crew || []).filter((x) => x !== id);
 }
 
-/** Summed modifier across hired crew, worn title and bought perks. */
-export function rosterMod(key) {
-  let n = 0;
-  for (const id of S.crew || []) {
-    const c = CREW.find((x) => x.id === id);
-    if (c && c.mod[key]) n += c.mod[key];
-  }
-  for (const id of S.perks || []) {
-    const p = PERKS.find((x) => x.id === id);
-    if (p && p.mod[key]) n += p.mod[key];
-  }
-  const t = TITLES.find((x) => x.id === S.title);
-  if (t && t.mod[key]) n += t.mod[key];
-  return n;
-}
 
 export const crewWages = () =>
   (S.crew || []).reduce((n, id) => n + (CREW.find((x) => x.id === id)?.wage || 0), 0);
@@ -746,9 +857,12 @@ function settle() {
  * it, so five levels of investment did literally nothing.
  */
 function creepThreat() {
+  // 향약(p_militia)은 「threatCut 8」을 약속한 유일한 항목이고, 그 키를 읽는
+  // 코드가 없었다. 매달 팔도의 위협이 그만큼 덜 오른다.
+  const calm = rosterMod('threatCut');
   for (const c of CITIES) {
     const g = devLevel(c.id, 'garrison');
-    addThreat(c.id, rand(0.6, 2.6) * Math.max(0.1, 1 - g * 0.3));
+    addThreat(c.id, rand(0.6, 2.6) * Math.max(0.1, 1 - g * 0.3) - calm * 0.25);
   }
 }
 
@@ -790,7 +904,11 @@ export function endMonth() {
   S.month += 1;
   // Rank privileges and the easy setting both promise extra actions; this is
   // where the promise is kept. 첨사 and 공신 each grant one.
-  S.ap = AP_PER_MONTH + perks().ap + (diff().apBonus || 0);
+  // 길잡이 노인 · 심부름꾼 · 사공 · 역졸, 그리고 파발과 선단과 행수 -- 여섯
+  // 갈래가 「행동 +1」을 약속하고 한 번도 준 적이 없다. `perks()` 는 작위의
+  // 특권이지 도가 특성이 아니라서, 이름이 비슷해 가려져 있었다.
+  S.ap = AP_PER_MONTH + perks().ap + (diff().apBonus || 0)
+    + Math.round(rosterMod('ap') + treasureMod('ap'));
   // Twelve chapters exist, so the cap is twelve. It used to be eleven, which
   // meant 종장 was written, shipped, and never once shown: month 22 clamped
   // back to 11 and month 24 went straight to the ending screen.
@@ -841,6 +959,22 @@ export function endMonth() {
 
   peak('peakWorth', worth);
   if (!S.debt) bump('debtFreeMonths');
+  // 곳간이 찼는가, 한 품목을 쥐었는가, 이 달에 화물을 잃지 않았는가.
+  // 셋 다 업적 표가 이름으로만 알고 있던 값이다.
+  if (stored() >= capacity() * 0.98) bump('fullWarehouse');
+  for (const g of GOODS) {
+    const mine = S.stock[g.id] || 0;
+    if (mine < 20) continue;
+    const town = CITIES.reduce((n, c) => n + marketStock(c.id, g.id), 0);
+    if (mine >= town * 0.6) { bump('cornered'); break; }
+  }
+  if (!S.lostCargoThisMonth) bump('noCargoLostMonths');
+  S.lostCargoThisMonth = false;
+  // 혹독을 견딘 한 회차, 그리고 한 번도 지지 않은 한 회차.
+  if (ending) {
+    if (S.difficulty === 'hard') bump('hardClears');
+    if (!(S.stats.deaths || 0)) bump('flawlessRun');
+  }
   const earned = checkDeeds();
 
   if (ending) {
@@ -974,9 +1108,14 @@ export function swearOath(id) {
 
 /** 6. Wounds heal on their own, a month at a time. */
 export function healWounds() {
+  // 의원·약초꾼, 군의와 약방과 만인의 은인 -- 여섯 갈래가 「치료」를 약속하고
+  // 아무것도 하지 않았다. 이제 회복이 빨라져, 많이 모으면 한 달에 두 달치가
+  // 낫는다. 나을 상처가 없으면 아무 일도 없다.
+  const care = 1 + rosterMod('heal') + treasureMod('heal');
+  const step = Math.max(1, Math.round(care));
   for (const id of S.crew || []) {
     const o = officer(id);
-    if (o.wounded > 0) o.wounded -= 1;
+    if (o.wounded > 0) o.wounded = Math.max(0, o.wounded - step);
   }
 }
 

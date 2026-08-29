@@ -1,18 +1,18 @@
 // Boot, fixed-timestep loop, and the scene state machine that stitches the
 // management turn to the action stages.
 
-import { loadArt } from './core/loader.js';
+import { img, art, loadArt, ensure, haveAll, warm, keysOf } from './core/loader.js';
 import {
   initInput, endKeyFrame, endPointerFrame, setTouchVisible,
 } from './core/input.js';
 import { unlockAudio, playMusic } from './core/audio.js';
 import { loadAccess } from './core/util.js';
-import { MANIFEST, STORY } from './data/gamedata.js';
+import { MANIFEST, STORY, FOREGROUND, ENEMIES, ENDINGS } from './data/gamedata.js';
 import {
-  S, newGame, loadGame, saveGame, clearSave, addLog,
+  S, newGame, loadGame, saveGame, clearSave, addLog, bump, peak,
 } from './game/state.js';
 import {
-  endMonth, grantReward, loseCargo, rollOffers, rollTreasure, checkDeeds, bump, peak,
+  endMonth, grantReward, loseCargo, rollOffers, rollTreasure, checkDeeds,
   resolveStratagem, spendProvisions, woundSomeone, claimRegion,
 } from './game/economy.js';
 import { addRes } from './game/state.js';
@@ -65,7 +65,7 @@ const titleHooks = {
     rollOffers();
     markSeen(1);
     addLog('남원 땅에서 다시 시작한다.', 'info');
-    goto(() => new Story(1, () => toHubOrStory()));
+    gotoNeeding(storyArt(STORY[1]), () => new Story(1, () => toHubOrStory()));
   },
   onContinue: () => { if (loadGame()) toHub(); },
 };
@@ -91,9 +91,17 @@ function toHubOrStory() {
   toHub();
 }
 
+/** A chapter opens on one painting and the faces of whoever speaks in it. */
+function storyArt(chapter) {
+  if (!chapter) return [];
+  const keys = [`cut/${chapter.cut}`];
+  for (const l of chapter.lines || []) if (l.npc) keys.push(`npc/${l.npc}`);
+  return keys;
+}
+
 function toHub() {
   saveGame();
-  goto(() => new Hub({
+  gotoNeeding(keysOf({ items: MANIFEST.items, ui: MANIFEST.ui }), () => new Hub({
     onBattle: (stage) => startBattle(stage),
     onEndMonth: () => finishMonth(),
   }));
@@ -116,7 +124,42 @@ function startBattle(stage) {
   };
   S.duelWon = false;
   S.duelLost = false;
-  goto(() => new Battle(prepared, (res) => onBattleDone(prepared, res)));
+  gotoNeeding(battleArt(prepared), () => new Battle(prepared, (res) => onBattleDone(prepared, res)));
+}
+
+/**
+ * Every plate a given fight will reach for.
+ *
+ * A foe is named by *type*; the plate it draws is `sprite`, and the attack and
+ * stagger frames hang off that. The allies use the same folder. Getting this
+ * list wrong does not crash -- it silently falls back to a stance frame, which
+ * is why the list is derived from the data rather than guessed.
+ */
+function battleArt(stage) {
+  const keys = [];
+  if (stage.bg) {
+    keys.push(`bg/${stage.bg}`);
+    const fg = FOREGROUND[stage.bg];
+    if (fg) keys.push(`bg/${fg}`);
+  }
+  const set = ['hemp', 'pad', 'hide', 'mail'][Math.min(S.armor, 3)];
+  for (const c of MANIFEST.chars) if (c.startsWith(`${set}_`)) keys.push(`chars/${c}`);
+  const plates = new Set();
+  for (const w of stage.waves || []) {
+    for (const id of w) {
+      const cfg = ENEMIES[id];
+      if (cfg) plates.add(cfg.sprite || id);
+    }
+  }
+  for (const f of MANIFEST.fx) keys.push(`fx/${f}`);
+  for (const a of ['ally_mercenary', 'ally_militia', 'ally_monk']) plates.add(a);
+  for (const p of plates) {
+    for (const suffix of ['', '_atk', '_hit']) {
+      const id = p + suffix;
+      if (MANIFEST.enemies.includes(id)) keys.push(`enemies/${id}`);
+    }
+  }
+  return keys;
 }
 
 function onBattleDone(stage, res) {
@@ -176,7 +219,7 @@ function onBattleDone(stage, res) {
       addLog('전란이 끝났다. 남은 것은 장부뿐이다.', 'good');
       toHubOrStory();
     } else if (nextChapter) {
-      goto(() => new Story(nextChapter, () => toHubOrStory()));
+      gotoNeeding(storyArt(STORY[nextChapter]), () => new Story(nextChapter, () => toHubOrStory()));
     } else {
       toHubOrStory();
     }
@@ -200,14 +243,15 @@ function finishMonth() {
   saveGame();
   goto(() => new MonthReport(report, () => {
     if (report.ending) {
-      goto(() => new Ending(report.ending, () => { clearSave(); toTitle(); }));
+      gotoNeeding([`cut/${ENDINGS[report.ending]?.cut}`],
+        () => new Ending(report.ending, () => { clearSave(); toTitle(); }));
       return;
     }
     // Chapter openings that are not tied to a battle.
     const ch = S.chapter;
     if (STORY[ch] && !S.seenStory?.[ch]) {
       markSeen(ch);
-      goto(() => new Story(ch, () => toHubOrStory()));
+      gotoNeeding(storyArt(STORY[ch]), () => new Story(ch, () => toHubOrStory()));
     } else {
       toHubOrStory();
     }
@@ -265,26 +309,77 @@ const isCoarse = matchMedia('(pointer: coarse)').matches;
 
 // ---------------------------------------------------------------- boot
 
-async function boot() {
-  loadAccess();
-  initInput(canvas);
+/**
+ * Show the loading veil while `job` runs, then hide it again.
+ *
+ * The veil used to be removed from the DOM once boot finished, because boot was
+ * the only time anything waited. Now that art arrives in waves it has to be
+ * able to come back -- on a slow line a fight can outrun the warm-up.
+ */
+async function withVeil(job) {
+  const veil = document.getElementById('loading');
   const bar = document.getElementById('bar');
   const pct = document.getElementById('pct');
-
-  await loadArt(MANIFEST, (p) => {
+  veil.classList.remove('gone');
+  await job((p) => {
     bar.style.width = `${Math.round(p * 100)}%`;
     pct.textContent = `${Math.round(p * 100)}%`;
   });
+  veil.classList.add('gone');
+}
+
+/**
+ * Enter a scene, but not before the plates it draws are in.
+ *
+ * Normally the warm-up has them already and this is a synchronous `goto` with
+ * one array scan in front of it. When it is not, the veil comes back rather
+ * than letting the scene draw holes -- `img()` returning null is the battle's
+ * fallback path, so a late plate would silently render the wrong frame instead
+ * of nothing at all.
+ */
+function gotoNeeding(keys, next) {
+  if (haveAll(keys)) { goto(next); return; }
+  withVeil((onP) => ensure(keys, onP)).then(() => goto(next));
+}
+
+async function boot() {
+  loadAccess();
+  initInput(canvas);
+
+  // The title screen needs the title screen's art. Everything else -- every
+  // wardrobe, every foe, every painting -- used to be downloaded before this
+  // point, which at sixty-two megabytes meant staring at a progress bar for
+  // most of a minute before the game would say its own name.
+  await withVeil((onP) => loadArt({ ui: MANIFEST.ui }, onP));
 
   const veil = document.getElementById('loading');
-  veil.classList.add('gone');
-  setTimeout(() => veil.remove(), 600);
 
   const unlock = () => { unlockAudio(); playMusic('town'); };
   addEventListener('pointerdown', unlock, { once: true });
   addEventListener('keydown', unlock, { once: true });
 
   scene = new Title(titleHooks);
+
+  // What the boot actually cost, for the dev handle. The claim "the title now
+  // waits on three megabytes instead of sixty-two" should be checkable in the
+  // browser rather than only on the filesystem.
+  window.__boot = {
+    titleAtMs: Math.round(performance.now()),
+    platesAtTitle: Object.keys(art).length,
+    platesTotal: keysOf(MANIFEST).length,
+  };
+
+  // The rest comes down while the player reads the title, in the order a run
+  // meets it: the hub's icons and faces, then the hero and the foes he opens
+  // on, then the paintings and the wardrobes he may never reach.
+  warm([
+    { items: MANIFEST.items, npc: MANIFEST.npc },
+    { chars: MANIFEST.chars.filter((c) => c.startsWith('hemp_')), bg: MANIFEST.bg },
+    { fx: MANIFEST.fx },
+    { enemies: MANIFEST.enemies },
+    { cut: MANIFEST.cut },
+    { chars: MANIFEST.chars.filter((c) => !c.startsWith('hemp_')) },
+  ]);
 
   requestAnimationFrame((t) => { last = t; frame(t); });
 }

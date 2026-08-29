@@ -101,11 +101,11 @@ export function rankPerks(rep) {
 // they gate the things that should not be purely a money problem.
 
 export const RESOURCES = [
-  { id: 'horse', name: '말', icon: 'items/fur',
+  { id: 'horse', name: '말', icon: 'items/res_horse',
     desc: '수레와 파발. 이동과 적재에 든다.' },
-  { id: 'iron', name: '철', icon: 'items/sword',
+  { id: 'iron', name: '철', icon: 'items/res_iron',
     desc: '무기를 벼리고 성을 고친다.' },
-  { id: 'powder', name: '화약', icon: 'items/bomb',
+  { id: 'powder', name: '화약', icon: 'items/res_powder',
     desc: '조총과 신기전, 그리고 계략 하나.' },
 ];
 

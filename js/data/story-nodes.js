@@ -15,6 +15,8 @@
 // A node with a `trigger` schedules itself; one without is only reachable as
 // the `next` of another choice.
 
+import { crewNodes } from './crew-scenes.js';
+
 const N = {};
 
 /** Declare a node. Keeps the id on the object so the scheduler can sort them. */
@@ -115,7 +117,10 @@ node('m1_vow', {
 node('m2_broker', {
   priority: 95,
   trigger: { chapter: 2 },
-  cut: 'cut_firstwin',
+  // 「팔 줄도 아는가」 -- 가게가 열리는 순간이다. 제2장과 같은 그림을
+  // 되풀이하고 있었고, 마침 고을 상인 결말이 제 그림을 갖게 되면서
+  // 이 판이 놀고 있었다.
+  cut: 'cut_shopopen',
   who: '객주',
   npc: 'npc_broker',
   music: 'town',
@@ -159,7 +164,7 @@ node('m2_broker', {
 node('m3_famine', {
   priority: 95,
   trigger: { chapter: 3 },
-  cut: 'cut_ashes',
+  cut: 'cut_famine',
   who: '선비',
   npc: 'npc_scholar',
   music: 'sad',
@@ -385,6 +390,7 @@ node('m5_prep', {
 });
 
 node('m5_waegwan', {
+  cut: 'cut_silver',
   who: '왜상',
   npc: 'npc_interpreter',
   lines: [
@@ -429,7 +435,7 @@ node('m5_waegwan', {
 node('m6_yi', {
   priority: 95,
   trigger: { chapter: 6 },
-  cut: 'cut_landing',
+  cut: 'cut_prisoner',
   who: '선비',
   npc: 'npc_scholar',
   music: 'sad',
@@ -588,6 +594,7 @@ node('m8_sister', {
 });
 
 node('m8_search', {
+  cut: 'cut_refugees',
   who: '',
   lines: [
     '남원 가는 길은 사람으로 메어 있었다. 모두 반대 방향으로 걷고 있었다.',
@@ -618,6 +625,7 @@ node('m8_search', {
 });
 
 node('m8_end', {
+  cut: 'cut_ruin',
   who: '',
   lines: [
     '그는 남원성 자리에 닿았다. 성은 없었다.',
@@ -711,7 +719,7 @@ node('m9_after', {
 node('m10_ming', {
   priority: 95,
   trigger: { chapter: 10 },
-  cut: 'cut_qing',
+  cut: 'cut_ming_loot',
   who: '어사',
   npc: 'npc_inspector',
   music: 'sad',
@@ -762,7 +770,7 @@ node('m10_ming', {
 node('m11_last', {
   priority: 98,
   trigger: { chapter: 11 },
-  cut: 'cut_caravan',
+  cut: 'cut_winter_convoy',
   who: '모국기',
   music: 'boss',
   lines: [
@@ -1118,6 +1126,7 @@ node('b_sister_2', {
 });
 
 node('b_father_grave', {
+  cut: 'cut_grave',
   priority: 65,
   trigger: { chapter: 6, notFlag: 'visited_grave' },
   who: '',
@@ -1138,6 +1147,7 @@ node('b_father_grave', {
 });
 
 node('b_father_talk', {
+  cut: 'cut_grave',
   who: '',
   npc: 'npc_father',
   lines: [
@@ -1197,6 +1207,7 @@ node('b_gisaeng_2', {
 // =====================================================================
 
 node('i_first_fortune', {
+  cut: 'cut_strongroom',
   priority: 40,
   trigger: { money: 20000 },
   who: '객주',
@@ -1286,6 +1297,10 @@ node('i_the_offer', {
       effects: { ji: 4, bond: { npc_magistrate: 1 }, flags: ['asked_whose_will'] }, next: null },
   ],
 });
+
+// Every hire gets a scene, generated from their trade. Written out in
+// crew-scenes.js -- see the note there for why thirty-six people were mute.
+Object.assign(N, crewNodes());
 
 export const NODES = N;
 export const NODE_COUNT = Object.keys(N).length;

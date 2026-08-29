@@ -80,7 +80,18 @@ export function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+/**
+ * Where the panels were drawn, when a harness asks.
+ *
+ * Same trick the button probe uses and for a neighbouring reason: a button off
+ * the screen is unreachable, and a button outside its own panel is drawn over
+ * whatever else lives there. Two skill cards were printing across the ledger
+ * ticker and the goal bar, and nothing but a human eye could tell.
+ */
+export const panelProbe = { rects: null };
+
 export function panel(ctx, x, y, w, h, opts = {}) {
+  if (panelProbe.rects) panelProbe.rects.push({ x, y, w, h });
   const {
     fill = 'rgba(20,17,12,.88)',
     stroke = 'rgba(200,137,47,.55)',
@@ -99,7 +110,19 @@ export function panel(ctx, x, y, w, h, opts = {}) {
   ctx.restore();
 }
 
+/**
+ * Where the labels went, when a harness asks.
+ *
+ * Only the position is recorded, not the extent: the layout harness draws into
+ * a stub context whose measureText is a constant, so any width taken from it
+ * would be fiction. Vertical placement is exact, though, and that is the half
+ * that goes wrong -- a line printed at y 600 on a 540-pixel canvas is simply
+ * not there, and nothing else in the suite can see it.
+ */
+export const textProbe = { marks: null };
+
 export function text(ctx, str, x, y, opts = {}) {
+  if (textProbe.marks) textProbe.marks.push({ str: String(str), x, y, size: opts.size || 16 });
   const {
     size = 16,
     weight = 600,
@@ -175,6 +198,52 @@ function tintedSprite(img, w, h, tint) {
   c.fillRect(0, 0, cw, ch);
   c.globalCompositeOperation = 'source-over';
   return { canvas: scratch, cw, ch };
+}
+
+// Recoloured plates, keyed by source and tint. Built once and kept: a foe's
+// tint is fixed at design time, and rebuilding one per frame would mean a
+// full-size composite forty times a frame.
+const recolourCache = new Map();
+
+/**
+ * The same plate in different cloth.
+ *
+ * Twenty-two of the forty-one foes share their drawing with somebody else,
+ * and every one of them carried a `tint` meant to tell them apart. Nothing
+ * ever read it -- so a boss and the footsoldier he commands rendered pixel
+ * for pixel alike, and the field sat there for months looking like it worked.
+ *
+ * `source-atop` is what the hit flash uses, and it is wrong here: filling at
+ * any useful strength flattens the brushwork into a slab of colour. The
+ * `color` blend takes hue and saturation from the tint and luminosity from
+ * the plate, so every stroke, fold and highlight survives the change of dye.
+ */
+export function recoloured(image, tint, strength = 0.6) {
+  if (!image || !image.width || !tint) return image;
+  const key = `${image.src || ''}|${tint}|${strength}`;
+  const hit = recolourCache.get(key);
+  if (hit) return hit;
+  const c = document.createElement('canvas');
+  c.width = image.width;
+  c.height = image.height;
+  const g = c.getContext('2d');
+  g.drawImage(image, 0, 0);
+  // Keep the plate's own alpha before the fill destroys it. Clipping back
+  // afterwards with `destination-in` was the obvious move and it is wrong:
+  // that multiplies alpha by itself, so every antialiased edge pixel gets
+  // thinner and the brush outline frays. Six percent of this sprite.
+  const cover = g.getImageData(0, 0, c.width, c.height);
+  g.globalCompositeOperation = 'color';
+  g.globalAlpha = strength;
+  g.fillStyle = tint;
+  g.fillRect(0, 0, c.width, c.height);
+  g.globalAlpha = 1;
+  g.globalCompositeOperation = 'source-over';
+  const dyed = g.getImageData(0, 0, c.width, c.height);
+  for (let i = 3; i < dyed.data.length; i += 4) dyed.data[i] = cover.data[i];
+  g.putImageData(dyed, 0, 0);
+  recolourCache.set(key, c);
+  return c;
 }
 
 /**

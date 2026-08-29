@@ -8,7 +8,7 @@ import { img } from '../core/loader.js';
 import { sfx, playMusic } from '../core/audio.js';
 import {
   clamp, rand, chance, lerp, approach, easeOut, text, panel,
-  drawSprite, groundShadow, roundRect, won, access, saveAccess,
+  drawSprite, recoloured, groundShadow, roundRect, won, access, saveAccess,
 } from '../core/util.js';
 import { button } from '../core/ui.js';
 import { settings, toggleMusic, toggleSfx } from '../core/audio.js';
@@ -20,7 +20,7 @@ import { inSwing, inCollide, sameLane, liftGap, LANE, LANE_SHOT } from './hit.js
 import { PROVISION, STRATAGEMS, DUEL } from '../data/rtk.js';
 import {
   S, weapon, armor, playerMaxHp, upLevel, equippedSkills, attackMul, trinketMod, diff,
-  masteryOf, treasureMod, bestStat,
+  masteryOf, treasureMod, rosterMod, bestStat, bump, peak,
 } from './state.js';
 import {
   leftHeld, rightHeld, jumpPressed, attackPressed, guardHeld, guardPressed,
@@ -136,7 +136,10 @@ const HERO_STAND = 168;
  * Pose sets, indexed by armour tier. Each set is a complete, internally
  * consistent wardrobe -- the hero only ever changes clothes between fights.
  */
-const HERO_SETS = ['hemp', 'hemp', 'mail', 'mail'];
+// 무명옷 · 누비 두루마기 · 피갑 · 두정갑. 네 단계, 네 벌. 한때는 벌이 둘뿐이라
+// 네 번의 구매 중 두 번이 화면에서 아무 일도 아니었다 -- 특히 피갑 4,200냥은
+// 최상급 두정갑 차림을 그대로 입혀 줬다. 이제 사면 갈아입는다.
+const HERO_SETS = ['hemp', 'pad', 'hide', 'mail'];
 /**
  * How tall each pose reads, as a fraction of the standing height.
  *
@@ -206,6 +209,7 @@ class Fx {
     this.sparks = [];     // hot metal-on-metal scatter, drawn additively
     this.embers = [];     // slow drifting motes that keep the screen alive
     this.beams = [];      // god-ray wedges thrown from a heavy contact
+    this.plates = [];     // painted effect art -- the crescents, bursts and blasts
     this.aberr = 0;       // chromatic split, peaks on the biggest hits
     this.quake = 0;       // low-frequency ground roll, separate from shake
   }
@@ -298,6 +302,39 @@ class Fx {
   }
 
   /**
+   * A painted effect plate.
+   *
+   * Everything this class drew was a stroke: an arc eight pixels wide for a
+   * sword falling, a circle for the impact, dots for the debris. Held still on
+   * a landed hit it came to one thin white line and some specks -- the fight
+   * had no picture in it at all. These are the same events painted, laid over
+   * the strokes rather than in place of them, so the timing and the colour that
+   * were already right stay right and the eye gets something to read.
+   *
+   * `orbit` is what makes a swing a swing: the plate is drawn out at that
+   * radius and rotated about the actor's shoulder, so the crescent travels the
+   * arc instead of sitting on it. Additive by default, because a slash is light
+   * and light adds; ink and dust pass `add: false`.
+   */
+  plate(key, x, y, size, opts = {}) {
+    const {
+      rot = 0, dir = 1, life = 0.22, add = true, spin = 0,
+      grow = 1.1, orbit = 0, alpha = 1, drift = 0, rise = 0, foot = false,
+      tint = null,
+      // How much of the additive pass to lay over the painted body. Plates that
+      // are already near-white -- the parry clash especially -- blow out to a
+      // featureless blob at the default, so they ask for less.
+      glow = 0.42,
+    } = opts;
+    // The budget the shock rings already respect. A plate is one drawImage, far
+    // cheaper than a refraction pass, but a hundred of them in a boss's opening
+    // volley is still a hundred composites over a full-screen canvas.
+    if (this.plates.length > (quality.heavy ? 24 : 12)) this.plates.shift();
+    this.plates.push({ key, x, y, size, rot, dir, life, t: life,
+      add, spin, grow, orbit, alpha, drift, rise, foot, tint, glow });
+  }
+
+  /**
    * Arc of a swing. `sweep` picks the shape so each combo step reads
    * differently: horizontal, rising, or an overhead chop.
    */
@@ -310,6 +347,15 @@ class Fx {
     };
     const [a0, a1] = arcs[sweep] || arcs.flat;
     this.slashes.push({ x, y, dir, reach, t: 0.19, life: 0.19, tint, a0, a1 });
+    // The crescent rides the same arc the stroke describes: it starts at a0 and
+    // is spun through to a1 over the stroke's own life, held out at the swing
+    // radius. A plate pinned at the midpoint reads as a decal stuck to the air;
+    // one that travels reads as a blade.
+    const wide = sweep === 'wide' || sweep === 'chop';
+    this.plate(wide ? 'slash_wide' : 'slash_flat', x, y, reach * (wide ? 1.6 : 1.45), {
+      dir, rot: a0, spin: (a1 - a0) / 0.19, orbit: reach * 0.36,
+      life: 0.19, grow: 1.18, alpha: 0.85,
+    });
   }
 
   /**
@@ -342,6 +388,13 @@ class Fx {
     this.floats = this.floats.filter((f) => f.t > 0);
     for (const s of this.slashes) s.t -= dt;
     this.slashes = this.slashes.filter((s) => s.t > 0);
+    for (const pl of this.plates) {
+      pl.t -= dt;
+      pl.rot += pl.spin * dt;
+      pl.x += pl.drift * dt;
+      pl.y -= pl.rise * dt;
+    }
+    this.plates = this.plates.filter((pl) => pl.t > 0);
     for (const r of this.rings) r.t -= dt;
     this.rings = this.rings.filter((r) => r.t > 0);
     for (const l of this.lines) { l.t -= dt; l.x += l.dir * 2600 * dt; }
@@ -455,6 +508,56 @@ class Fx {
           b.y + Math.sin(b.a + b.w) * b.len * (1.4 - k));
         ctx.closePath();
         ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // The painted plates, over the strokes that time them.
+    if (this.plates.length) {
+      ctx.save();
+      for (const pl of this.plates) {
+        let src = img(`fx/${pl.key}`);
+        if (!src || !src.width) continue;      // still warming; the strokes carry it
+        // Dyed plates go through the same `color` blend the foes' cloth uses,
+        // and are cached the same way. It is here because 금창약 is green and a
+        // green effect cannot be painted on a green screen -- so the plate is
+        // painted in white and dyed on the way to the canvas.
+        if (pl.tint) src = recoloured(src, pl.tint, 0.85);
+        const k = 1 - pl.t / pl.life;
+        // Full brightness immediately, then away. There was a ramp here -- a
+        // fade *in* over the first twelfth of the life -- and it was wrong for
+        // a reason that took a screenshot to see: the heavy blows that deserve
+        // these plates also set hitStop, and during hit-stop the scene does not
+        // update, so nothing ages. The plate sat at k = 0 for the whole freeze,
+        // and at k = 0 the ramp put it at alpha zero. Every plate was invisible
+        // for precisely the ten frames the game stops to show it off.
+        //
+        // Nothing needs to fade in. A blow is instantaneous.
+        const a = pl.alpha * (1 - k ** 1.7);
+        if (a <= 0.01) continue;
+        const sc = lerp(1, pl.grow, easeOut(k));
+        const w = pl.size * sc;
+        const h = (src.height / src.width) * w;
+        ctx.save();
+        ctx.translate(pl.x - cam, pl.y - (pl.foot ? h * 0.42 : 0));
+        ctx.scale(pl.dir, 1);
+        ctx.rotate(pl.rot);
+        ctx.translate(pl.orbit * sc, 0);
+        // Paint first, glow second. Drawing these additively alone was the
+        // mistake: `lighter` adds to what is under it, and a white crescent
+        // added to a courtyard in full afternoon sun is a courtyard in full
+        // afternoon sun. The plates already carry their own values -- the black
+        // smoke on the blast, the oxblood in the ink -- so the body goes down
+        // normally and the additive pass on top is only the bloom.
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = a;
+        ctx.drawImage(src, -w / 2, -h / 2, w, h);
+        if (pl.add) {
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.globalAlpha = a * pl.glow;
+          ctx.drawImage(src, -w / 2, -h / 2, w, h);
+        }
+        ctx.restore();
       }
       ctx.restore();
     }
@@ -618,6 +721,24 @@ class Actor {
     this.vx = fromDir * (opts.knock ?? 210) * (this.elite?.knockResist ? 0.35 : 1);
     if (opts.launch) this.vy = -opts.launch;
     fx.burst(this.x, this.y - 60, 9, { color: '#ffd28a', spread: 200 });
+    // A hit is where the picture has to be. The starburst sits on the contact
+    // point; a crit gets the shockwave ring instead, so the player can tell the
+    // two apart at a glance rather than by reading the damage number.
+    const big = opts.crit || dmg > 40;
+    fx.plate(opts.crit ? 'crit' : 'impact', this.x - fromDir * 14, this.y - 74,
+      opts.crit ? 200 : 108 + Math.min(dmg, 60) * 1.9,
+      { dir: fromDir, rot: rand(-0.5, 0.5), life: opts.crit ? 0.3 : 0.2,
+        grow: opts.crit ? 1.6 : 1.35, alpha: opts.crit ? 0.82 : 0.8,
+        // A killing blow lands the crescent, this, the ink and the dissipation
+        // on one spot inside a few frames. Each is right on its own and stacked
+        // at full glow they are a white hole with a corpse somewhere inside it.
+        glow: opts.crit ? 0.22 : 0.3 });
+    if (big) {
+      fx.plate('blood', this.x + fromDir * 20, this.y - 78, 150, {
+        dir: fromDir, rot: rand(-0.7, 0.7), life: 0.42, grow: 1.5,
+        add: false, alpha: 0.8, rise: 30,
+      });
+    }
     // Sparks along the blow's direction, plus scrape dust at the feet.
     for (let i = 0; i < 6; i++) {
       fx.burst(this.x + fromDir * (10 + i * 6), this.y - 70 - i * 4, 1,
@@ -734,7 +855,14 @@ class Actor {
     groundShadow(ctx, this.x - cam, this.baseY + 1, dh * (0.46 - lift * 0.18),
       (0.5 - lift * 0.34) * alpha * (1 - z * 0.25), LIGHT_DIR);
 
-    drawSprite(ctx, img(sprite), this.x - cam + (p.dx || 0) * ds,
+    // 2. A foe that shares its drawing with somebody else is dyed to its own
+    // colour first, so the two are not the same man twice. Cached, so this
+    // costs a Map lookup per body per frame.
+    const plate = this.cfg && this.cfg.tint
+      ? recoloured(img(sprite), this.cfg.tint)
+      : img(sprite);
+
+    drawSprite(ctx, plate, this.x - cam + (p.dx || 0) * ds,
       this.y + p.dy * ds + sink, dh, {
         flip: this.dir < 0,
         alpha, rot, sx: p.sx, sy: p.sy,
@@ -746,7 +874,7 @@ class Actor {
     // 3. Aerial perspective: the air between you and a distant body washes it
     // toward the backdrop. Cheap, and it does more for depth than the scaling.
     if (z > 0.05) {
-      drawSprite(ctx, img(sprite), this.x - cam + (p.dx || 0) * ds,
+      drawSprite(ctx, plate, this.x - cam + (p.dx || 0) * ds,
         this.y + p.dy * ds + sink, dh, {
           flip: this.dir < 0,
           alpha: alpha * z * 0.30, rot, sx: p.sx, sy: p.sy,
@@ -893,8 +1021,10 @@ class Player extends Actor {
   syncArms() {
     const wp = weapon();
     const m = masteryOf(wp.id);
-    this.reach = wp.reach * (1 + (m.reach || 0));
-    this.atkSpeed = wp.speed * (1 + (m.speed || 0));
+    // 「창잡이」의 사거리와 「농군의 왕」의 손 빠르기. 칭호 두 개가 이 두 줄에
+    // 닿지 못해 걸어만 두는 장식이었다.
+    this.reach = wp.reach * (1 + (m.reach || 0) + rosterMod('reach') + treasureMod('reach'));
+    this.atkSpeed = wp.speed * (1 + (m.speed || 0) + rosterMod('speed') + treasureMod('speed'));
   }
 
   update(dt, scene) {
@@ -986,6 +1116,7 @@ class Player extends Actor {
       this.vx = approach(this.vx, 0, 12, dt);
       if (this.charge >= 1 && !this.chargeRang) {
         this.chargeRang = true;
+        bump('charges');
         sfx.bell();
         scene.fx.ring(this.x, this.y - 90, 150, { color: 'rgba(255,226,150,.9)', w: 5 });
       }
@@ -1113,6 +1244,7 @@ class Player extends Actor {
     // Airborne and melee: drop into a plunge instead of a normal swing. It
     // costs the jump but hits everything around the landing.
     if (!this.onGround && !wp.ranged && !this.plunge) {
+      bump('plunges');
       this.plunge = true;
       this.state = 'attack';
       this.t = 1.2;
@@ -1171,6 +1303,7 @@ class Player extends Actor {
     if (this.castT > 0 || this.state === 'hurt') return;
 
     this.spendStam(sk.stam);
+    bump('skillUses');
     this.cd[sk.id] = sk.cd;
     this.state = 'cast';
     // Only the empty-handed skills get the empty-handed plate.
@@ -1188,6 +1321,8 @@ class Player extends Actor {
     const radius = 210;
     scene.fx.ring(this.x, GROUND, radius, { color: 'rgba(255,214,140,.95)', w: 8 });
     scene.fx.burst(this.x, GROUND, 30, { color: '#d8bb84', spread: 460, up: 60 });
+    scene.fx.plate('dust', this.x, GROUND, radius * 2.6,
+      { life: 0.5, grow: 1.55, add: false, alpha: 0.75, foot: true });
     for (const e of scene.enemies) {
       if (e.dead || Math.abs(e.x - this.x) > radius) continue;
       e.hurt(this.dmg * 2.2 * this.power(), Math.sign(e.x - this.x) || this.dir, scene.fx,
@@ -1223,6 +1358,8 @@ class Player extends Actor {
     scene.fx.pop(0.35);
     scene.punch(0, 10);
     scene.fx.ring(this.x, this.y - 90, 340, { color: 'rgba(255,180,110,.9)', w: 10, life: 0.5 });
+    scene.fx.plate('roar', this.x, this.y - 90, 420,
+      { life: 0.5, grow: 1.9, alpha: 0.9, spin: 1.2 });
     this.atkBuffT = 8;
     for (const a of scene.allies) if (!a.dead) a.rally = 8;
     for (const e of scene.enemies) {
@@ -1260,6 +1397,7 @@ class Player extends Actor {
     });
     scene.fx.burst(x, GROUND, 34, { color: '#ff9a4a', spread: 420, up: 90 });
     scene.fx.ring(x, GROUND, 170, { color: 'rgba(255,150,60,.9)', w: 7 });
+    scene.fx.plate('blast', x, GROUND - 70, 260, { life: 0.35, grow: 1.5, alpha: 0.9 });
     scene.punch(this.dir * 8, 6);
   }
 
@@ -1277,6 +1415,73 @@ class Player extends Actor {
     scene.fx.burst(x, GROUND, 18, { color: '#c8d2e0', spread: 380, up: 30 });
   }
 
+  /**
+   * 갈고리 — the only thing in the set that moves the *enemy*.
+   *
+   * Every other skill either walks the hero forward or drops something on the
+   * ground, so a foe that keeps its distance is answered by chasing it. This
+   * answers it by bringing it here, and it collapses the depth gap too: a
+   * hooked man lands on the hero's own rank, where a swing can reach him.
+   */
+  cast_hook(scene) {
+    sfx.dash();
+    this.castT = 0.42;
+    const REACH = 380;
+    scene.fx.trail(this.x + this.dir * 20, this.y - 100, this.dir, 30, REACH,
+      -0.06, 0.06, 'rgba(200,190,170,.95)');
+    const caught = scene.enemies
+      .filter((e) => !e.dead && (e.x - this.x) * this.dir > 0
+        && Math.abs(e.x - this.x) < REACH)
+      .sort((a, b) => Math.abs(a.x - this.x) - Math.abs(b.x - this.x))
+      .slice(0, 3);
+    for (const e of caught) {
+      const land = this.x + this.dir * (SEPARATION + 24);
+      scene.fx.ghost(e.sprite(), e.x, e.y, e.h, { flip: e.dir < 0 });
+      e.x = clamp(land, 60, ARENA - 60);
+      e.z = clamp(this.z || 0, 0, 0.92);
+      e.vx = 0;
+      e.hurt(this.dmg * 0.35 * this.power(), -this.dir, scene.fx,
+        { knock: 0, stun: 0.6 });
+      if (e.dead) scene.onKill(e);
+    }
+    if (caught.length) {
+      scene.hitStop = 0.06;
+      scene.punch(-this.dir * 9, 5);
+      sfx.heavy();
+    } else {
+      scene.fx.float(this.x, this.y - 190, '헛걸렸다', '#8d8069', 15);
+    }
+  }
+
+  /**
+   * 연막 — the depth axis used to get *out* of a fight rather than into one.
+   *
+   * Stepping a rank is already a dodge, but it is slow and visible. This is the
+   * panic button: a puff, a rank crossed, and whatever was winding up at you is
+   * now winding up at where you were.
+   */
+  cast_smoke(scene) {
+    sfx.dash();
+    this.castT = 0.3;
+    this.invuln = 1.1;
+    scene.fx.ghost(this.sprite(), this.x, this.y, this.drawHeight(),
+      { flip: this.dir < 0 });
+    scene.fx.burst(this.x, this.y - 70, 30,
+      { color: 'rgba(214,214,206,.9)', spread: 300, up: 60, life: 0.9, size: 5 });
+    scene.fx.plate('smoke', this.x, this.y - 70, 260,
+      { life: 0.9, grow: 1.8, add: false, alpha: 0.85, rise: 26 });
+    // Cross to the far rank: whichever of the two edges is further from here.
+    const here = this.z || 0;
+    this.z = here < 0.46 ? 0.86 : 0.06;
+    this.vz = 0;
+    // Anything mid-swing loses its aim, which is the point of the smoke.
+    for (const e of scene.enemies) {
+      if (e.dead || Math.abs(e.x - this.x) > 300) continue;
+      if (e.state === 'windup') { e.state = 'idle'; e.cool = rand(0.5, 1.1); }
+    }
+    scene.fx.float(this.x, this.y - 190, '연막', '#d6d6ce', 17);
+  }
+
   /** 금창약 — the only sustain in the set, and slow enough to be a decision. */
   cast_geumchang(scene) {
     sfx.win();
@@ -1288,6 +1493,8 @@ class Player extends Actor {
     scene.fx.float(this.x, this.y - 200, `+${heal}`, '#8fe0a0', 24);
     scene.fx.ring(this.x, this.y - 80, 130, { color: 'rgba(150,230,170,.9)', w: 6 });
     scene.fx.burst(this.x, this.y - 90, 20, { color: '#9fe8b4', spread: 220, up: 70 });
+    scene.fx.plate('heal', this.x, this.y - 20, 180,
+      { life: 0.85, grow: 1.2, alpha: 0.9, rise: 40, foot: true, tint: '#8fe0a0' });
   }
 
   cast_wall(scene) {
@@ -1307,7 +1514,18 @@ class Player extends Actor {
     scene.punch(this.dir * 16, 6);
     const reach = 520;
     scene.fx.slash(this.x + this.dir * 40, this.y - 95, this.dir, 300, 'rgba(255,255,235,.95)');
-    scene.fx.beam = { x: this.x, dir: this.dir, y: this.y - 95, len: reach, t: 0.3, life: 0.3 };
+    // This line used to read `scene.fx.beam = {...}`, assigning an object over
+    // the Fx.beam *method*. Two things followed. The cut drew no beam, because
+    // nothing reads a stray property. And every later `fx.beam(...)` -- a heavy
+    // finisher, a stomp, a matchlock -- threw `beam is not a function` and took
+    // the rest of doAttack down with it: no hit-stop, no punch, no sound. One
+    // 발도 poisoned the fight for as long as it lasted. Nothing caught it
+    // because no harness cast a skill and *then* swung; tools/test-combat.mjs
+    // now does exactly that.
+    scene.fx.beam(this.x + this.dir * 40, this.y - 95, 7,
+      { len: reach, color: 'rgba(255,246,214,.8)' });
+    scene.fx.plate('aura', this.x + this.dir * (reach * 0.45), this.y - 95, reach * 1.15,
+      { dir: this.dir, life: 0.3, grow: 1.25, drift: this.dir * 260, alpha: 0.95 });
     for (const e of scene.enemies) {
       if (e.dead) continue;
       const dx = (e.x - this.x) * this.dir;
@@ -1391,6 +1609,8 @@ class Player extends Actor {
     scene.zoomPunch(0.06 + 0.09 * k);
     scene.fx.aberr = Math.max(scene.fx.aberr, 3 + 5 * k);
     scene.fx.quake = Math.max(scene.fx.quake, 0.5 + 0.6 * k);
+    scene.fx.plate('crit', this.x + this.dir * reach * 0.5, this.y - 95,
+      (240 + 220 * k), { dir: this.dir, life: 0.34, grow: 1.7, alpha: 0.8 + 0.18 * k });
     scene.fx.shock(this.x + this.dir * reach * 0.5, this.y - 95, 200 + 190 * k,
       { power: 18 + 20 * k });
     scene.fx.beam(this.x + this.dir * reach * 0.5, this.y - 95, 4 + Math.round(3 * k),
@@ -1492,6 +1712,9 @@ class Player extends Actor {
         scene.fx.beam(this.x + this.dir * 46, this.y - 96, 4,
           { len: 190, color: 'rgba(255,206,130,.75)' });
         scene.fx.spark(this.x + this.dir * 46, this.y - 96, 16, { dir: -this.dir });
+        scene.fx.plate('muzzle', this.x + this.dir * 78, this.y - 96, 210, {
+          dir: this.dir, life: 0.2, grow: 1.4, drift: this.dir * 120, alpha: 0.95,
+        });
         scene.punch(-this.dir * 12, 4);
         sfx.heavy();
       } else {
@@ -1507,8 +1730,15 @@ class Player extends Actor {
     const arc = { flat: [-0.95, 0.75], rise: [0.9, -1.0], chop: [-1.6, 0.4],
       wide: [-1.45, 1.45] }[sweep];
     const swingR = this.reach * 0.9 * arcScale;
-    scene.fx.slash(this.x + this.dir * 26, this.y - 92, this.dir, swingR,
-      tint.replace(')', ',.85)').replace('#', 'rgba(') === tint ? tint : tint, sweep);
+    if (fx.shape === 'thrust') {
+      // A spear does not sweep, and drawing it a crescent was telling the
+      // player the wrong thing about the weapon in his hands.
+      scene.fx.plate('thrust', this.x + this.dir * 30, this.y - 96, swingR * 2.2,
+        { dir: this.dir, life: 0.16, grow: 1.5, drift: this.dir * 340, alpha: 0.95 });
+    } else {
+      scene.fx.slash(this.x + this.dir * 26, this.y - 92, this.dir, swingR,
+        tint.replace(')', ',.85)').replace('#', 'rgba(') === tint ? tint : tint, sweep);
+    }
     scene.fx.trail(this.x + this.dir * 26, this.y - 92, this.dir,
       this.reach * 0.35, this.reach * 1.05 * arcScale,
       arc[0] * arcScale, arc[1] * arcScale, tint);
@@ -1518,13 +1748,20 @@ class Player extends Actor {
     // A swing carries through this many bodies; the spear runs a whole rank.
     const maxPierce = (wp.pierce || 1) + (m.pierce || 0);
     const knockMul = ((wp.knock || 1) + (m.knock || 0)) * mass;
-    const breaks = wp.guardBreak || m.guardBreak;
+    // 조총 and 승자총통 are sold at 19,000 and 16,000냥 with the line 「갑주를
+    // 뚫는다」 across the card, and the `pierceArmor` flag that said so was read
+    // by nothing anywhere in the game. A ball goes through a rattan shield; a
+    // sword is turned by it. That is the whole reason to carry one.
+    const breaks = wp.guardBreak || m.guardBreak || wp.pierceArmor;
     for (const e of scene.enemies) {
       if (e.dead || pierced >= maxPierce) continue;
       if (inSwing(this, e, this.reach)) {
         pierced += 1;
         // The finisher always crits; a mastery can also roll one early.
-        const crit = this.combo >= last || (m.crit > 0 && Math.random() < m.crit);
+        // 명궁·허공, 병기고와 군기창, 무기장과 군기시 출신 -- 열 갈래가 급소
+        // 확률을 약속했고 여기서는 숙련만 보고 있었다.
+        const critOdds = (m.crit || 0) + rosterMod('crit') + treasureMod('crit');
+        const crit = this.combo >= last || (critOdds > 0 && Math.random() < critOdds);
         // Juggle: a foe still in the air takes more and stays up, so launching
         // one and following it is worth the risk.
         const airborne = e.y < GROUND - 26;
@@ -1540,7 +1777,9 @@ class Player extends Actor {
           e.snareT = Math.max(e.snareT || 0, (wp.snare || 0) + (m.snare || 0));
           scene.fx.ring(e.x, e.y - 40, 54, { color: 'rgba(150,200,120,.8)', w: 3 });
         }
+        if (crit) bump('crits');
         if (airborne) {
+          bump('juggles');
           scene.fx.float(e.x, e.y - 150, '공중 연격', '#9fe0ff', 16);
           scene.loot += 6;
         }
@@ -1597,31 +1836,56 @@ class Player extends Actor {
     // 등패 carries a shield on the arm, so its cut applies to every blow that
     // lands -- guarded or not -- and mastery thickens it. Capped so no future
     // weapon can make the hero untouchable.
-    const armCut = clamp((weapon().block || 0)
+    //
+    // Except against a matchlock. The two arquebusiers on the field carry the
+    // same `pierceArmor` flag the player's own guns do, and it was dead on both
+    // sides; now a ball ignores the shield, which is the one thing 등패 cannot
+    // answer and the reason carrying it is a choice rather than a free 45%.
+    const armCut = opts.pierceArmor ? 0 : clamp((weapon().block || 0)
       + (masteryOf(weapon().id).block || 0), 0, 0.75);
     if (armCut > 0) dmg *= 1 - armCut;
 
     if (this.state === 'guard' && fromDir !== this.dir) {
       if (this.parryWindow > 0) {
         // Perfect parry: no damage, attacker is thrown back and staggered.
+        bump('parries');
         sfx.parry();
         scene.hitStop = 0.16;
-        scene.fx.pop(0.55);
+        // The full-screen flash used to be the whole announcement, so it was
+        // set loud. With painted steel crossing at the contact point the two
+        // stack into a white slab and bury both fighters -- the plate says it
+        // better and says *where*, so the flash steps back to a rim of light.
+        scene.fx.pop(0.3);
         scene.slowmo = 0.28;
         scene.punch(-fromDir * 14, 6);
         scene.fx.ring(this.x + this.dir * 40, this.y - 100, 130,
           { color: 'rgba(255,245,200,.95)', w: 8 });
         scene.fx.burst(this.x + this.dir * 40, this.y - 100, 20,
           { color: '#fff3c9', spread: 380 });
+        // 0.18 seconds wide, refunds stamina, staggers the attacker and feeds a
+        // deed counter -- the hardest thing the combat asks for, and its whole
+        // picture was one ring and twenty dots.
+        scene.fx.plate('clash', this.x + this.dir * 58, this.y - 100, 200,
+          { dir: this.dir, life: 0.36, grow: 1.45, alpha: 0.92, glow: 0.12 });
+        scene.fx.spark(this.x + this.dir * 44, this.y - 100, 22, { dir: -fromDir });
+        scene.fx.aberr = Math.max(scene.fx.aberr, 4);
         scene.fx.float(this.x, this.y - 150, '막아냈다!', '#ffe08a', 22);
         this.stam = clamp(this.stam + 18, 0, this.maxStam);
         opts.attacker?.hurt(this.dmg * 0.5, -fromDir, scene.fx, { knock: 460, stun: 0.85 });
         return;
       }
-      const cut = Math.max(1, dmg * 0.25);
+      // 「벽」과 「무흔」, 결의와 혹독을 견딘 이가 약속한 guard 는 음수다 --
+      // 막았을 때 새어 들어오는 몫을 줄인다. 0.05 아래로는 안 내려간다.
+      const leak = clamp(0.25 + rosterMod('guard') + treasureMod('guard'), 0.05, 0.25);
+      const cut = Math.max(1, dmg * leak);
       this.stam -= 24;
       sfx.block();
       scene.shake = 5;
+      // A blow skidding off a guard had nothing at the point of contact at all
+      // -- the screen shook and a word appeared over the hero's head.
+      scene.fx.plate('guard', this.x + this.dir * 38, this.y - 96, 150,
+        { dir: this.dir, life: 0.26, grow: 1.4, alpha: 0.9, glow: 0.2 });
+      scene.fx.spark(this.x + this.dir * 38, this.y - 96, 10, { dir: -fromDir });
       scene.fx.float(this.x, this.y - 140, '방어', '#bcd2ff', 16);
       if (this.stam <= 0) {
         this.stam = 0;
@@ -1741,7 +2005,8 @@ class Enemy extends Actor {
       this.vx = this.dir * this.moveSpeed * 3.1;
       for (const target of [p]) {
         if (inCollide(this, target, 52)) {
-          target.takeHit(this.power * 1.25, this.dir, scene, { attacker: this });
+          target.takeHit(this.power * 1.25, this.dir, scene,
+            { attacker: this, pierceArmor: !!this.cfg.pierceArmor });
           this.state = 'recover'; this.t = 0.7; this.vx *= -0.3;
         }
       }
@@ -1790,6 +2055,33 @@ class Enemy extends Actor {
         // Held in reserve: keep a readable gap and shuffle, do not swing.
         ? this.reach * 2.2 + 40
         : Math.max(this.reach * 0.72, SEPARATION + 6);
+
+    // 시노비, 기습 결사대 and 이가의 두목 each carried a `blink` flag that no code
+    // anywhere had ever read, so the three shadow-fighters closed the ground at
+    // a jog like everybody else. They cross it instead: from mid range they go
+    // out in a puff of dark and land inside the guard, every few seconds.
+    if (this.cfg.blink && !this.dead && this.state !== 'hurt') {
+      this.blinkCool = (this.blinkCool ?? rand(0.9, 2.6)) - dt;
+      if (this.blinkCool <= 0 && dist > wantRange + 60 && dist < 360) {
+        this.blinkCool = rand(2.8, 4.6);
+        // `this.h`, not drawHeight() -- that one lives on Player, and calling
+        // it here threw the first time a 시노비 tried to vanish.
+        scene.fx.ghost(this.sprite(), this.x, this.y, this.h, { flip: this.dir < 0 });
+        scene.fx.burst(this.x, this.y - this.h * 0.5, 14,
+          { color: 'rgba(38,44,56,.9)', spread: 220 });
+        this.x = clamp(p.x - this.dir * (SEPARATION + 8), 60, ARENA - 60);
+        this.z = clamp(p.z || 0, 0, 0.92);
+        this.vx = 0;
+        scene.fx.burst(this.x, this.y - this.h * 0.5, 14,
+          { color: 'rgba(150,160,180,.85)', spread: 180 });
+        sfx.dash();
+        // Arriving inside the guard is the point, so the blade is already up.
+        this.state = 'windup';
+        this.t = Math.max(0.2, this.cfg.windup * 0.8);
+        this.cool = rand(0.9, 1.6);
+        return;
+      }
+    }
 
     if (dist > wantRange + 14) {
       this.vx = this.dir * this.moveSpeed * speedMul;
@@ -1845,6 +2137,7 @@ class Enemy extends Actor {
         x: this.x + this.dir * 26, y: this.y - this.h * 0.58,
         vx: this.dir * (this.cfg.proj === 'bullet' ? 1050 : 660),
         dmg: this.power, from: 'enemy', kind: this.cfg.proj, z: this.z,
+        pierceArmor: !!this.cfg.pierceArmor,
       }));
       this.cfg.proj === 'bullet' ? sfx.gun() : sfx.arrow();
       return;
@@ -1856,7 +2149,8 @@ class Enemy extends Actor {
       this.reach * 0.3, this.reach * 0.95, -1.0, 0.7, 'rgba(255,140,110,.75)');
     if (inSwing(this, p, this.reach, { back: 30, lift: 140 })) {
       const mult = this.phase === 2 ? 1.25 : 1;
-      p.takeHit(this.power * mult, this.dir, scene, { attacker: this });
+      p.takeHit(this.power * mult, this.dir, scene,
+        { attacker: this, pierceArmor: !!this.cfg.pierceArmor });
     }
 
     // A boss sweep also scatters your allies -- on its own rank. This is a
@@ -1894,7 +2188,8 @@ class Enemy extends Actor {
         color: 'rgba(255,140,90,.75)', w: 5,
       });
       if (Math.abs(p.x - this.x) < mv.reach && !p.dead) {
-        p.takeHit(dmg, Math.sign(p.x - this.x) || this.dir, scene, { attacker: this });
+        p.takeHit(dmg, Math.sign(p.x - this.x) || this.dir, scene,
+          { attacker: this, pierceArmor: !!this.cfg.pierceArmor });
       }
       for (const a of scene.allies) {
         if (!a.dead && Math.abs(a.x - this.x) < mv.reach) {
@@ -1994,10 +2289,19 @@ class Enemy extends Actor {
       // Use the actual wind-up length: a boss special sets a longer tell than
       // cfg.windup, which would drive this negative and blow up the ellipse.
       const k = clamp(1 - this.t / Math.max(0.01, this.t0 || this.cfg.windup), 0, 1);
+      // `t` counts *down* to the strike, so k runs 0 -> 1 as the blow arrives.
+      // This read `0.5 * (1 - k)`: brightest the instant the foe began winding
+      // up, and completely invisible at the moment the blade actually landed.
+      // The parry window is 0.18s and has to be timed against impact, so the
+      // one cue the player has was fading out precisely as it became useful.
+      // It still opens outward -- that is the original read, a blow gathering
+      // reach -- but it now hardens instead of dissolving, and snaps white on
+      // the last fifth, which is the part you are actually timing against.
+      const close = k > 0.8;
       ctx.save();
-      ctx.globalAlpha = 0.5 * (1 - k);
-      ctx.strokeStyle = '#ff6a4a';
-      ctx.lineWidth = 3;
+      ctx.globalAlpha = 0.2 + 0.62 * k;
+      ctx.strokeStyle = close ? '#fff0d0' : '#ff6a4a';
+      ctx.lineWidth = 3 + 3.5 * k;
       ctx.beginPath();
       const rr = Math.max(4, (this.special ? this.special.reach : this.reach) * (0.4 + k * 0.7));
       ctx.ellipse(this.x - cam, GROUND, rr, 16 + k * 8, 0, 0, Math.PI * 2);
@@ -2131,7 +2435,7 @@ class Projectile {
     Object.assign(this, {
       x: 0, y: 0, z: 0, vx: 0, vy: 0, dmg: 5, from: 'enemy', kind: 'arrow',
       dead: false, t: 0, arc: false, falling: false, blast: 0, pierce: 1, hitList: null,
-      tint: null,
+      tint: null, pierceArmor: false,
       // A shot travels down one rank of the floor: step off the line and it
       // misses. A barrage does not -- arrow rain and a ground shockwave cover
       // every rank, which is the point of them.
@@ -2165,6 +2469,10 @@ class Projectile {
       scene.punch(0, 12);
       scene.fx.ring(this.x, GROUND, this.blast, { color: 'rgba(255,170,90,.95)', w: 8 });
       scene.fx.burst(this.x, GROUND - 20, 34, { color: '#ffa24a', spread: 520, up: 80 });
+      scene.fx.plate('blast', this.x, GROUND - this.blast * 0.36, this.blast * 2.4,
+        { life: 0.4, grow: 1.45, alpha: 0.95, rise: 40 });
+      scene.fx.plate('dust', this.x, GROUND, this.blast * 3,
+        { life: 0.55, grow: 1.5, add: false, alpha: 0.6, foot: true });
       for (const e of scene.enemies) {
         if (e.dead || Math.abs(e.x - this.x) > this.blast) continue;
         e.hurt(this.dmg, Math.sign(e.x - this.x) || 1, scene.fx,
@@ -2205,7 +2513,7 @@ class Projectile {
       const p = scene.player;
       if (!p.dead && Math.abs(p.x - this.x) < 26
         && this.onLane(p) && Math.abs(this.heightOver(p) + 90) < 76) {
-        p.takeHit(this.dmg, Math.sign(this.vx), scene);
+        p.takeHit(this.dmg, Math.sign(this.vx), scene, { pierceArmor: this.pierceArmor });
         this.dead = true;
         scene.fx.burst(this.x, this.y, 7, { color: '#ffb27a' });
       }
@@ -2898,7 +3206,17 @@ export class Battle {
     const coin = Math.round(e.bounty * bonus);
 
     this.kills += 1;
-    this.loot += coin;
+    // 「정예 사냥꾼」, 「범 잡은 이」, 그리고 무기 종류별 처치 업적 넷이
+    // 전부 이 한 줄을 기다리고 있었다. 세는 사람이 없어서 셀 수가 없었다.
+    if (e.elite) bump('elites');
+    if (e.id === 'boss_blacktiger' || e.cfg.sprite === 'boss_blacktiger') bump('blacktiger');
+    { const w = weapon();
+      if (w.id === 'sickle') bump('sickleKills');
+      else if (w.ranged && /gun|chong|tong|jeon/.test(w.id)) bump('gunKills');
+      else if (w.ranged) bump('bowKills');
+      else if (w.reach >= 96) bump('spearKills'); }
+    // 보패꾼·심마니·야철·적선지가가 약속한 노획 증가.
+    this.loot += Math.round(coin * (1 + rosterMod('loot') + treasureMod('loot')));
     S.stats.kills += 1;
 
     // Mastery is per weapon, so the tally has to know which one did it.
@@ -2924,6 +3242,20 @@ export class Battle {
     this.fx.ring(e.x, e.y - e.h * 0.45, e.h * 1.05,
       { color: 'rgba(255,214,140,.85)', w: 7 });
     this.fx.spark(e.x, e.y - e.h * 0.5, 12, { dir: Math.sign(e.x - this.player.x) || 1 });
+    // The body topples and fades over 1.25s and nothing marked the moment it
+    // stopped being a man. Ink coming apart as it rises -- restrained, and it
+    // belongs to the same brush the rest of the game is drawn with.
+    // Held back an eighth of a second. Fired on the same frame as the blow it
+    // sits underneath the impact and reads as nothing; a beat later the flash
+    // has gone and the body coming apart is the only thing on screen.
+    const dx = Math.sign(e.x - this.player.x) || 1;
+    const ex = e.x;
+    const eh = e.h;
+    const ey = e.y;
+    this.after(0.12, () => {
+      this.fx.plate('death', ex, ey - eh * 0.28, eh * 0.95,
+        { life: 0.8, grow: 1.5, add: false, alpha: 0.85, rise: 58, drift: dx * 18 });
+    });
     this.punch(Math.sign(e.x - this.player.x) * 11, 7);
     if (e.cfg.boss) {
       this.fx.pop(0.6);
@@ -3024,6 +3356,7 @@ export class Battle {
         this.place(this.pending, -1);
         this.pending = null;
       } else if (alive === 0) {
+        bump('wipeouts');
         if (this.wave + 1 < this.stage.waves.length) {
           this.wave += 1;
           this.spawnWave();
@@ -3041,6 +3374,10 @@ export class Battle {
         noHit: !this.tookHit,
         clutch: this.player.hp <= playerMaxHp() * 0.1,
       };
+      // 데리고 나간 사람을 데리고 돌아왔는가. 「동료를 살렸다」가 이걸 세는데
+      // 세어 준 적이 없었다.
+      const brought = this.allies.length;
+      if (brought) bump('alliesSaved', this.allies.filter((a) => !a.dead).length);
       this.onDone(this.result);
     }
     if (this.state === 'dead' && this.t > 2.4 && !this.result) {
@@ -3144,11 +3481,27 @@ export class Battle {
       ctx.save();
       ctx.globalAlpha = 0.28 + 0.35 * k;
       if (h.kind === 'fire') {
-        const g = ctx.createLinearGradient(0, GROUND - 60, 0, GROUND + 6);
-        g.addColorStop(0, 'rgba(255,150,60,0)');
-        g.addColorStop(1, 'rgba(255,120,40,.85)');
-        ctx.fillStyle = g;
-        ctx.fillRect(h.x - this.cam - h.r, GROUND - 60, h.r * 2, 66);
+        // 화공 burns for six seconds and used to be an orange gradient
+        // rectangle -- the longest-lived effect in the game and the flattest.
+        // Two copies of one painted flame plate, breathing out of phase and
+        // mirrored against each other, read as fire from a single still: the
+        // eye reads the changing silhouette, not the individual tongues.
+        const flame = img('fx/fire');
+        if (flame && flame.width) {
+          ctx.globalCompositeOperation = 'lighter';
+          for (let i = 0; i < 2; i += 1) {
+            const beat = Math.sin(h.age * (7 + i * 3.4) + i * 2.1);
+            const w = h.r * 2 * (1.04 + beat * 0.05);
+            const hh = (flame.height / flame.width) * w * (1.06 + beat * 0.13);
+            ctx.globalAlpha = (0.34 + 0.3 * k) * (0.78 + beat * 0.2);
+            ctx.save();
+            ctx.translate(h.x - this.cam, GROUND + 6);
+            ctx.scale(i ? -1 : 1, 1);
+            ctx.drawImage(flame, -w / 2, -hh, w, hh);
+            ctx.restore();
+          }
+          ctx.globalCompositeOperation = 'source-over';
+        }
         ctx.globalAlpha = 0.5 + 0.4 * Math.abs(Math.sin(h.age * 9));
         ctx.strokeStyle = 'rgba(255,206,130,.9)';
         ctx.lineWidth = 3;
@@ -3167,6 +3520,29 @@ export class Battle {
         }
       }
       ctx.restore();
+    }
+    // 철벽 soaks 65% of a blow for four seconds and, until now, showed nothing
+    // for it: a label in the buff bar and a word that flashed when you were
+    // already being hit. The barrier is the one thing the player needs to see
+    // while deciding whether to stand and take it.
+    {
+      const p = this.player;
+      const shield = img('fx/ward');
+      if (p && !p.dead && p.wallT > 0 && shield && shield.width) {
+        const w = 96;
+        const hh = (shield.height / shield.width) * w;
+        // Bright on the cast, steady through the middle, guttering at the end.
+        const fade = clamp(p.wallT / 0.6, 0, 1);
+        ctx.save();
+        ctx.globalAlpha = fade * (0.5 + 0.16 * Math.sin(this.t * 7));
+        ctx.translate(p.x - this.cam + p.dir * 44, p.y - 84);
+        ctx.scale(p.dir, 1);
+        ctx.drawImage(shield, -w / 2, -hh / 2, w, hh);
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha *= 0.5;
+        ctx.drawImage(shield, -w / 2, -hh / 2, w, hh);
+        ctx.restore();
+      }
     }
     if (this.freeze) {
       const f = this.freeze;

@@ -6,6 +6,10 @@
 // would rather not see. Order is roughly chronological.
 
 export const NPC_NAMES = {
+  npc_porter: '짐꾼', npc_boy: '심부름꾼', npc_cook: '찬모',
+  npc_spearman: '창수', npc_herbalist: '약초꾼', npc_boatman: '사공',
+  npc_surrendered: '항왜', npc_hunter: '사냥꾼', npc_shaman: '무녀',
+  npc_orphan: '거둔 아이', npc_armourer: '무기장', npc_oxdriver: '소몰이',
   npc_father: '아버지', npc_sister: '누이', npc_broker: '객주',
   npc_magistrate: '내수사 관리', npc_smith: '외눈 검객',
   npc_physician: '의원 최씨', npc_scholar: '선비', npc_monk: '스님',

@@ -21,8 +21,9 @@ import {
 } from '../data/rtk.js';
 import { selfPortrait, flag } from '../game/story.js';
 import { NPC_NAMES, BOND_WORDS, MEMOIRS } from '../data/memoirs.js';
+import { faceFor } from '../data/crew-scenes.js';
 import {
-  S, city, good, capacity, stored, buyPrice, sellPrice, priceOf, netWorth,
+  S, city, good, capacity, stored, buyPrice, sellPrice, priceOf, netWorth, fixedAssets,
   monthLabel, upLevel, cityUnlocked, weapon, armor, playerMaxHp, stockValue,
   addLog, GOAL_WORTH, MAX_MONTHS, equippedSkills, masteryProgress, ownsWeapon,
   rank, perks, officer, bestStat, devLevel, relation, relationTier, res, heldBy,
@@ -112,6 +113,45 @@ const TAB_BG = ['ui/hub_market', 'ui/hub_office', 'ui/hub_warehouse',
 
 /** How many screens the hub has. Read by tools/test-ui.mjs. */
 export const TAB_COUNT = TABS.length;
+
+/**
+ * What a hire actually gives, in the game's own words.
+ *
+ * Until now these bonuses did nothing at all, so the row never had to say --
+ * a line of flavour and a wage was the whole card. Now that they land, the
+ * difference between 삼돌(짐 15섬) and 개똥이(짐 12섬) is a real decision and
+ * the screen has to show it.
+ */
+const MOD_WORDS = {
+  cap: (v) => `짐 +${v}섬`,
+  dmg: (v) => `공격 ${v > 0 ? '+' : ''}${Math.round(v * 100)}%`,
+  hp: (v) => `체력 +${v}`,
+  buy: (v) => `매입 ${Math.round(v * 100)}%`,
+  sell: (v) => `매도 +${Math.round(v * 100)}%`,
+  ambush: (v) => `습격 ${Math.round(v * 100)}%`,
+  ap: (v) => `행동 +${v}`,
+  rep: (v) => `평판 ${v > 0 ? '+' : ''}${v}`,
+  upkeep: (v) => `유지비 ${Math.round(v * 100)}%`,
+  crit: (v) => `급소 +${Math.round(v * 100)}%`,
+  guard: (v) => `방어 ${Math.round(v * 100)}%`,
+  heal: (v) => `치료 +${Math.round(v * 100)}%`,
+  loot: (v) => `노획 +${Math.round(v * 100)}%`,
+  reach: (v) => `사거리 +${Math.round(v * 100)}%`,
+  speed: (v) => `속도 +${Math.round(v * 100)}%`,
+  season: (v) => `철 +${Math.round(v * 100)}%`,
+  threatCut: (v) => `치안 +${v}`,
+  stam: (v) => `기력 +${Math.round(v * 100)}%`,
+  repPerMonth: (v) => `달마다 평판 +${v}`,
+};
+
+/** @param {Record<string,number>} mod */
+function modWords(mod) {
+  return Object.entries(mod || {})
+    .map(([k, v]) => (MOD_WORDS[k] ? MOD_WORDS[k](v) : `${k} ${v}`))
+    .join(' · ');
+}
+
+
 
 export class Hub {
   /** @param {{onBattle:Function, onEndMonth:Function}} hooks */
@@ -261,17 +301,21 @@ export class Hub {
     text(ctx, '행동', 238, 47, { size: 11, color: '#a39373' });
 
     const worth = netWorth();
+    const fixed = fixedAssets();
+    // 세간 is shown so the four numbers add up on screen. Without it 순자산 is
+    // simply larger than 소지금 + 재고 and there is nothing to say why.
     const stats = [
       ['소지금', `${won(S.money)}냥`, '#f0dfb4'],
       ['재고', `${won(stockValue())}냥`, '#d8c69c'],
+      ['세간', `${won(fixed)}냥`, fixed > 0 ? '#c0b48f' : '#6d6455'],
       ['부채', `${won(S.debt)}냥`, S.debt > 0 ? '#e08a72' : '#8d8069'],
       ['순자산', `${won(worth)}냥`, worth >= GOAL_WORTH ? '#8fe0a0' : '#f0dfb4'],
     ];
-    let x = 322;
+    let x = 300;
     for (const [k, v, c] of stats) {
       text(ctx, k, x, 24, { size: 11, color: '#8d8069' });
       text(ctx, v, x, 44, { size: 15, weight: 700, color: c });
-      x += 118;
+      x += 96;
     }
 
     meter(ctx, W - 176, 22, 146, S.rep / 120, '평판', '#c8892f', `${Math.round(S.rep)}`);
@@ -444,7 +488,16 @@ export class Hub {
 
     const holding = S.stock[g.id];
     const canBuy = maxBuyable(g.id);
-    text(ctx, `보유 ${holding}${g.unit} · 최대 매입 ${canBuy}${g.unit}`, x + 400, top + 96,
+    // Say which of the three walls you are standing against. A cart holds three
+    // hundred 근 of 인삼 and a town keeps fourteen, so "최대 매입 7근" reads as a
+    // bug unless the screen names the town as the reason.
+    const byTown = Math.floor(marketStock(S.city, g.id) * 0.5);
+    const bySpace = Math.floor((capacity() - stored()) / g.bulk);
+    const why = canBuy <= 0 ? ''
+      : canBuy === byTown ? ' — 고을에 이만큼뿐이다'
+        : canBuy === bySpace ? ' — 짐칸이 찼다'
+          : ' — 소지금까지';
+    text(ctx, `보유 ${holding}${g.unit} · 최대 매입 ${canBuy}${g.unit}${why}`, x + 400, top + 96,
       { size: 12, color: '#a39373' });
     wrapText(ctx, hintFor(g), x + 400, top + 110, w - 424, 15, { size: 11, color: '#8d8069' });
 
@@ -669,7 +722,10 @@ export class Hub {
     // -- detail for the selected arm
     const wp = WEAPONS[this.wIdx];
     const dy = top + 260;
-    panel(ctx, 40, dy, 438, 84, { fill: 'rgba(18,15,10,.9)' });
+    // Height derived from where the containing panel ends rather than written
+    // out, because it had drifted eight pixels past it and the two borders were
+    // drawing on top of each other. 336 is the rack panel's height above.
+    panel(ctx, 40, dy, 438, (top + 336) - dy, { fill: 'rgba(18,15,10,.9)' });
     text(ctx, wp.name, 58, dy + 22, { size: 16, weight: 800, color: '#f0dfb4' });
     text(ctx, wp.trait, 58, dy + 40, { size: 11, weight: 700, color: '#c8892f', max: 250 });
     text(ctx, wp.desc, 58, dy + 56, { size: 10, color: '#8d8069', max: 260 });
@@ -853,14 +909,37 @@ export class Hub {
         fill: on ? 'rgba(74,45,18,.9)' : 'rgba(24,20,14,.8)',
         stroke: on ? 'rgba(232,196,120,.6)' : 'rgba(120,104,78,.3)',
       });
-      text(ctx, c.name, 58, y + 20, { size: 13, weight: 700, color: '#f0dfb4' });
-      text(ctx, `· ${c.role}`, 58 + c.name.length * 13 + 6, y + 20,
-        { size: 10, color: '#8d8069' });
-      text(ctx, c.desc, 58, y + 36, { size: 10, color: '#7d7159', max: 250 });
-      if (c.fights) {
-        text(ctx, '출전', 330, y + 20, { size: 10, color: '#c05a44' });
+      // The same face the story scenes give this person, so a hire on this
+      // list and the one who stops you in the yard are visibly one man.
+      const face = img(`npc/${faceFor(c.id)}`);
+      if (face) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(70, y + 24, 17, 0, Math.PI * 2);
+        ctx.clip();
+        // Thirteen of the twenty-four portraits are framed paintings with their
+        // own backdrop and eleven are cut out on transparency, so half the faces
+        // sat on a painted ground and half on whatever the row happened to be.
+        // Backing the disc first gives all of them the same ground.
+        ctx.fillStyle = '#241d15';
+        ctx.fill();
+        drawSprite(ctx, face, 70, y + 44, 40);
+        ctx.restore();
+        ctx.strokeStyle = on ? 'rgba(232,196,120,.55)' : 'rgba(120,104,78,.4)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(70, y + 24, 17, 0, Math.PI * 2);
+        ctx.stroke();
       }
-      text(ctx, `삯 ${won(c.wage)}`, 330, y + 36, { size: 10, color: '#8d8069' });
+      text(ctx, c.name, 94, y + 18, { size: 13, weight: 700, color: '#f0dfb4' });
+      text(ctx, `· ${c.role}`, 94 + c.name.length * 13 + 6, y + 18,
+        { size: 10, color: '#8d8069' });
+      text(ctx, modWords(c.mod), 94, y + 33, { size: 10, weight: 700, color: '#9fd0a8' });
+      text(ctx, c.desc, 94, y + 43, { size: 9, color: '#6d6455', max: 226 });
+      if (c.fights) {
+        text(ctx, '출전', 336, y + 18, { size: 10, color: '#c05a44' });
+      }
+      text(ctx, `삯 ${won(c.wage)}`, 336, y + 36, { size: 10, color: '#8d8069' });
       if (on) {
         if (button(ctx, { x: 374, y: y + 12, w: 92, h: 26 }, '내보낸다',
           { tone: 'ghost' })) {
@@ -1143,11 +1222,16 @@ export class Hub {
 
     // strategic resources
     text(ctx, '전략 자원', 352, ay + 54, { size: 12, weight: 700, color: '#d8c69c' });
+    // Every resource carried an `icon` and nothing had ever drawn one -- the
+    // row was three names and three numbers in 11px type, which is the hardest
+    // thing on this screen to read and the one you check most often.
     RESOURCES.forEach((rr, i) => {
       const x = 348 + i * 88;
-      text(ctx, rr.name, x, ay + 74, { size: 11, color: '#8d8069' });
-      text(ctx, String(res(rr.id)), x + 34, ay + 74,
-        { size: 13, weight: 800, color: '#e0b455' });
+      const ico = img(rr.icon);
+      if (ico) drawSprite(ctx, ico, x + 13, ay + 84, 28);
+      text(ctx, String(res(rr.id)), x + 32, ay + 74,
+        { size: 15, weight: 800, color: '#e0b455' });
+      text(ctx, rr.name, x + 32, ay + 87, { size: 10, color: '#8d8069' });
     });
 
     // ---- column 3: patrons
@@ -1429,7 +1513,17 @@ export class Hub {
     text(ctx, '두 가지를 지녀 전투 중 1·2 키로 쓴다', 92, top + 26,
       { size: 11, color: '#8d8069' });
 
-    SKILLS.forEach((sk, i) => {
+    // Six to a page. The panel gives 296px of room and a card is 96 tall, so
+    // three rows fit and the fourth does not: 마름쇠 and 화공 were being drawn
+    // over the ledger ticker and the goal bar, and 금창약 -- a 7,800냥 skill --
+    // landed at y 542 on a 540px canvas, where nobody could see it or buy it.
+    // The crew list already pages; this does it the same way.
+    const PER_PAGE = 6;
+    const pages = Math.max(1, Math.ceil(SKILLS.length / PER_PAGE));
+    this.skillPage = clamp(this.skillPage || 0, 0, pages - 1);
+    const shown = SKILLS.slice(this.skillPage * PER_PAGE, this.skillPage * PER_PAGE + PER_PAGE);
+
+    shown.forEach((sk, i) => {
       const col = i % 2, row = Math.floor(i / 2);
       const x = 40 + col * 224, y = top + 40 + row * 96;
       const owned = S.ownedSkills.includes(sk.id);
@@ -1472,6 +1566,15 @@ export class Hub {
         }
       }
     });
+
+    if (pages > 1) {
+      if (button(ctx, { x: 40, y: top + 306, w: 76, h: 24 }, '이전',
+        { enabled: this.skillPage > 0, tone: 'ghost', size: 12 })) this.skillPage -= 1;
+      text(ctx, `${this.skillPage + 1} / ${pages}`, 259, top + 322,
+        { size: 11, color: '#8d8069', align: 'center' });
+      if (button(ctx, { x: 388, y: top + 306, w: 76, h: 24 }, '다음',
+        { enabled: this.skillPage < pages - 1, tone: 'ghost', size: 12 })) this.skillPage += 1;
+    }
 
     // ---- trinkets
     panel(ctx, 506, top, 430, 190);

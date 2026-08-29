@@ -10,7 +10,7 @@
 // Everything below is a pure function of the node table plus S. The scene layer
 // only asks "what is on screen" and "the player pressed 2".
 
-import { S, addLog, addRep, addThreat, city } from './state.js';
+import { S, addLog, addRep, addThreat, city, bump } from './state.js';
 import { TRAITS, traitBand, REPUTES, ILL_REPUTES } from '../data/traits.js';
 import { NODES } from '../data/story-nodes.js';
 import { clamp } from '../core/util.js';
@@ -22,10 +22,18 @@ export const flagCount = (...ids) => ids.filter(flag).length;
 export const traitOf = (id) => (S.traits && S.traits[id]) || 0;
 export const bondWith = (npc) => (S.bonds && S.bonds[npc]) || 0;
 
+// A couple of the deeds count something the story already records as a flag --
+// standing at the father's grave, finding the sister. The flag was written and
+// the deed watched a counter nobody incremented, so 「아비의 무덤에 서다」 and
+// 「누이를 찾다」 could be lived through and never awarded.
+const FLAG_COUNTERS = { visited_grave: 'graveVisits', found_sister: 'sisterFound' };
+
 export function setFlag(id, on = true) {
   S.flags = S.flags || {};
-  if (on) S.flags[id] = true;
-  else delete S.flags[id];
+  if (on) {
+    if (FLAG_COUNTERS[id]) bump(FLAG_COUNTERS[id]);
+    S.flags[id] = true;
+  } else delete S.flags[id];
 }
 
 export function addTrait(id, n) {
