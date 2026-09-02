@@ -1,5 +1,9 @@
-// Everything you hear is synthesised at runtime -- no audio files ship with the
-// game. Music is a slow pentatonic (gyemyeonjo) loop over a drum pulse.
+// Effects are synthesised at runtime. Music is recorded: six gugak pieces under
+// assets/audio/, one per cue, fetched and decoded once and cross-faded on every
+// scene change. The pentatonic sequencer that used to be the whole soundtrack
+// is kept underneath as the fallback for a file that never arrives -- offline,
+// a broken deploy, a browser that will not decode -- so the game is never
+// silent, only quieter than it means to be.
 
 let ctx = null;
 let master = null;
@@ -224,12 +228,116 @@ function drumHit(t0, freq, peak, dur) {
   o.start(t0); o.stop(t0 + dur + 0.02);
 }
 
+// ------------------------------------------------------------ recorded music
+//
+// Every other layer of this game is painted, and the music was triangle waves
+// walking a pentatonic at random. It read as a placeholder because it was one.
+// These are the same six cues the sequencer served, as recordings.
+
+const MUSIC_FILES = ['town', 'market', 'battle', 'boss', 'sad', 'win'];
+const buffers = new Map();       // track -> AudioBuffer | 'loading' | 'failed'
+let recGain = null;              // recorded music has its own level: the synth
+let playing = null;              // { track, src, gain } for the piece under way
+let usingSequencer = false;
+
+function recOut() {
+  if (!recGain) {
+    recGain = ctx.createGain();
+    recGain.gain.value = 0.55;
+    recGain.connect(master);
+  }
+  return recGain;
+}
+
+/** Fetch and decode one piece. Resolves to the buffer or 'failed'; never throws. */
+async function fetchTrack(track) {
+  const have = buffers.get(track);
+  if (have && have !== 'loading') return have;
+  if (have === 'loading') return null;
+  buffers.set(track, 'loading');
+  try {
+    const res = await fetch(`assets/audio/${track}.mp3`);
+    if (!res.ok) throw new Error(String(res.status));
+    const buf = await ctx.decodeAudioData(await res.arrayBuffer());
+    buffers.set(track, buf);
+    return buf;
+  } catch {
+    buffers.set(track, 'failed');
+    return 'failed';
+  }
+}
+
+/**
+ * Pull every piece down while the title is on screen.
+ *
+ * A context can be created before the first gesture -- it only starts
+ * suspended -- and decoding does not need it running, so by the time the
+ * player presses a key all six are already in memory and the first note of
+ * the town theme lands on the same frame as the hub. The harnesses stub an
+ * AudioContext with no decoder; they get nothing to do here, which is right.
+ */
+export function warmMusic() {
+  if (!ensure() || typeof fetch !== 'function' || !ctx.decodeAudioData) return;
+  for (const t of MUSIC_FILES) {
+    fetchTrack(t).then((buf) => {
+      // The cue asked for this piece before it arrived. Start it now.
+      if (buf && buf !== 'failed' && currentTrack === t && !playing) startBuffer(t, buf);
+    });
+  }
+}
+
+function startBuffer(track, buf) {
+  const t0 = ctx.currentTime;
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.loop = track !== 'win';        // the fanfare resolves; everything else holds
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(1, t0 + 0.7);
+  src.connect(g);
+  g.connect(recOut());
+  src.start(t0);
+  playing = { track, src, gain: g };
+  if (usingSequencer) { stopMusicTimer(); usingSequencer = false; }
+}
+
+/** Let the current piece go, on a curve rather than a cut. */
+function fadeOutPlaying() {
+  if (!playing) return;
+  const { src, gain } = playing;
+  const t0 = ctx.currentTime;
+  gain.gain.cancelScheduledValues(t0);
+  gain.gain.setValueAtTime(Math.max(gain.gain.value, 0.0001), t0);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.6);
+  try { src.stop(t0 + 0.65); } catch { /* already ended */ }
+  playing = null;
+}
+
 export function playMusic(track) {
   if (!ensure()) return;
   if (currentTrack === track) return;
   currentTrack = track;
   stopMusicTimer();
+  usingSequencer = false;
+  fadeOutPlaying();
   if (!settings.music || !TRACKS[track]) return;
+  const buf = buffers.get(track);
+  if (buf && buf !== 'loading' && buf !== 'failed') { startBuffer(track, buf); return; }
+  if (buf === 'failed' || typeof fetch !== 'function' || !ctx.decodeAudioData) {
+    playSequencer(track);
+    return;
+  }
+  // Not here yet. warmMusic() will start it the moment it lands, if this is
+  // still the cue that is wanted; a beat of silence beats a beat of beeps.
+  if (!buf) fetchTrack(track).then((b) => {
+    if (b && b !== 'failed' && currentTrack === track && !playing) startBuffer(track, b);
+    else if (b === 'failed' && currentTrack === track && !playing) playSequencer(track);
+  });
+}
+
+/** The synthesised fallback: the loop that used to be the whole soundtrack. */
+function playSequencer(track) {
+  usingSequencer = true;
   const interval = (60 / TRACKS[track].bpm) * 1000 / 2; // eighth notes
   step = 0;
   musicTimer = setInterval(() => playStep(track), interval);
@@ -243,6 +351,22 @@ function stopMusicTimer() {
 export function stopMusic() {
   currentTrack = null;
   stopMusicTimer();
+  usingSequencer = false;
+  if (ctx) fadeOutPlaying();
+}
+
+/** What the music layer is doing, for a harness or a curious console. */
+export function musicStatus() {
+  const loaded = MUSIC_FILES.filter((t) => {
+    const b = buffers.get(t);
+    return b && b !== 'loading' && b !== 'failed';
+  });
+  const failed = MUSIC_FILES.filter((t) => buffers.get(t) === 'failed');
+  return {
+    track: currentTrack,
+    source: playing ? 'file' : usingSequencer ? 'synth' : 'none',
+    loaded, failed,
+  };
 }
 
 export function toggleMusic() {
@@ -250,7 +374,7 @@ export function toggleMusic() {
   const t = currentTrack;
   currentTrack = null;
   if (settings.music) playMusic(t || 'town');
-  else stopMusicTimer();
+  else { stopMusicTimer(); usingSequencer = false; if (ctx) fadeOutPlaying(); }
   return settings.music;
 }
 

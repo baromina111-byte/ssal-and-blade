@@ -1974,7 +1974,17 @@ class Enemy extends Actor {
       this.phase = 2;
       scene.fx.float(this.x, this.y - 240, '분노', '#ff7a5a', 30);
       scene.shake = 16; sfx.roar();
+      scene.fx.plate('roar', this.x, this.y - this.h * 0.5, this.h * 2.2,
+        { life: 0.6, grow: 1.8, alpha: 0.9, spin: -1.4, tint: '#ff6a4a' });
       this.invuln = 0.4;
+      // The turn is not a number ticking over: the boss opens the new phase
+      // with its rage move, telegraphed in full, so the player has to answer
+      // it before anything else happens.
+      const rage = BOSS_MOVES[this.id]?.rage;
+      if (rage && this.state !== 'windup' && this.state !== 'attack') {
+        this.telegraph(scene, rage);
+        return;
+      }
     }
     const speedMul = this.phase === 2 ? 1.32 : 1;
     const dx = p.x - this.x;
@@ -2101,17 +2111,13 @@ class Enemy extends Actor {
       // the floor at someone it cannot reach.
       if (zGap > LANE) { this.cool = Math.max(this.cool, 0.2); return; }
       if (this.cool <= 0) {
-        const move = BOSS_MOVES[this.id];
+        const base = BOSS_MOVES[this.id];
         // Bosses lead with a named, well-telegraphed move about half the time
         // once they are angry; the tell is long enough to read and dodge.
+        // Angry, they reach for the rage move two times in three.
+        const move = base && this.phase === 2 && base.rage && chance(0.66) ? base.rage : base;
         if (move && dist < move.reach + 90 && chance(this.phase === 2 ? 0.55 : 0.35)) {
-          this.special = move;
-          this.state = 'windup';
-          this.t = move.tell;
-          this.t0 = this.t;
-          sfx.drum();
-          scene.fx.float(this.x, this.y - this.h - 22, move.name, '#ff9a5a', 22);
-          scene.fx.ring(this.x, GROUND, move.reach, { color: 'rgba(255,120,80,.55)', w: 4, life: move.tell });
+          this.telegraph(scene, move);
           return;
         }
         if (this.cfg.kind === 'charger' && dist > 120) {
@@ -2166,6 +2172,19 @@ class Enemy extends Actor {
     }
   }
 
+  /** Commit to a named move: the wind-up, the shouted name, the ring. */
+  telegraph(scene, move) {
+    this.special = move;
+    this.state = 'windup';
+    this.t = move.tell;
+    this.t0 = this.t;
+    this.cool = rand(0.9, 1.6);
+    sfx.drum();
+    scene.fx.float(this.x, this.y - this.h - 22, move.name,
+      move === BOSS_MOVES[this.id]?.rage ? '#ff6a4a' : '#ff9a5a', move.hops || move.hits > 3 ? 26 : 22);
+    scene.fx.ring(this.x, GROUND, move.reach, { color: 'rgba(255,120,80,.55)', w: 4, life: move.tell });
+  }
+
   /** A boss signature move: multi-hit sweeps, leaps, or ground shockwaves. */
   /**
    * A boss's named move, and the one attack in the game that ignores depth on
@@ -2182,6 +2201,24 @@ class Enemy extends Actor {
     scene.punch(this.dir * 10, 10);
 
     const swing = (i) => {
+      if (this.dead) return;
+      if (mv.shot) {
+        // A matchlock volley is bullets, on a rank, with a flash at the
+        // muzzle -- not a crescent and a melee test out to six hundred.
+        this.dir = Math.sign(p.x - this.x) || this.dir;
+        const mx = this.x + this.dir * 30;
+        const my = this.y - this.h * 0.58;
+        scene.projectiles.push(new Projectile({
+          x: mx, y: my, vx: this.dir * 1050, dmg, from: 'enemy', kind: 'bullet',
+          z: this.z, pierceArmor: !!this.cfg.pierceArmor,
+        }));
+        scene.fx.plate('muzzle', mx + this.dir * 48, my, 170,
+          { dir: this.dir, life: 0.18, grow: 1.4, drift: this.dir * 120, alpha: 0.95 });
+        scene.fx.spark(mx, my, 10, { dir: -this.dir });
+        sfx.gun();
+        scene.punch(-this.dir * 6, 3);
+        return;
+      }
       scene.fx.slash(this.x + this.dir * 24, this.y - this.h * 0.55, this.dir,
         mv.reach * 0.85, 'rgba(255,150,120,.85)', i % 2 ? 'rise' : 'wide');
       scene.fx.ring(this.x, this.y - this.h * 0.5, mv.reach, {
@@ -2199,21 +2236,37 @@ class Enemy extends Actor {
     };
 
     if (mv.leap) {
-      // Cross the gap first, then land on top of the target.
-      this.vy = -680;
-      this.vx = Math.sign(p.x - this.x) * 520;
-      scene.after(0.42, () => swing(0));
-    } else if (mv.shock) {
-      swing(0);
-      // Two shockwaves travelling outward along the ground.
-      for (const d of [-1, 1]) {
-        scene.projectiles.push(new Projectile({
-          x: this.x + d * 40, y: GROUND - 26, vx: d * 420,
-          dmg: dmg * 0.7, from: 'enemy', kind: 'shock', wide: true,
-        }));
+      // Cross the gap first, then land on top of the target. `hits` used to
+      // be ignored on this branch -- 그림자 가르기 promised two cuts and made
+      // one -- and `hops` re-launches so a rage pounce can chase the dodge.
+      const hops = mv.hops || 1;
+      const perHop = Math.max(1, Math.round((mv.hits || 1) / hops));
+      for (let h = 0; h < hops; h += 1) {
+        scene.after(h * 0.82, () => {
+          if (this.dead) return;
+          this.vy = -680;
+          this.vx = Math.sign(p.x - this.x) * 520;
+          this.dir = Math.sign(p.x - this.x) || this.dir;
+          for (let i = 0; i < perHop; i += 1) scene.after(0.42 + 0.16 * i, () => swing(i));
+        });
       }
-      scene.fx.burst(this.x, GROUND, 30, { color: '#c9a877', spread: 460, up: 40 });
-      scene.zoomPunch(0.04);
+    } else if (mv.shock) {
+      const quake = (i) => {
+        if (this.dead) return;
+        swing(i);
+        // Two shockwaves travelling outward along the ground.
+        for (const d of [-1, 1]) {
+          scene.projectiles.push(new Projectile({
+            x: this.x + d * 40, y: GROUND - 26, vx: d * 420,
+            dmg: dmg * 0.7, from: 'enemy', kind: 'shock', wide: true,
+          }));
+        }
+        scene.fx.burst(this.x, GROUND, 30, { color: '#c9a877', spread: 460, up: 40 });
+        scene.fx.plate('dust', this.x, GROUND, mv.reach * 2.4,
+          { life: 0.5, grow: 1.5, add: false, alpha: 0.75, foot: true });
+        scene.zoomPunch(0.04);
+      };
+      for (let i = 0; i < (mv.hits || 1); i += 1) scene.after(0.38 * i, () => quake(i));
     } else {
       for (let i = 0; i < (mv.hits || 1); i++) scene.after(0.16 * i, () => swing(i));
     }

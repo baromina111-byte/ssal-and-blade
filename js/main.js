@@ -5,7 +5,7 @@ import { img, art, loadArt, ensure, haveAll, warm, keysOf } from './core/loader.
 import {
   initInput, endKeyFrame, endPointerFrame, setTouchVisible,
 } from './core/input.js';
-import { unlockAudio, playMusic } from './core/audio.js';
+import { unlockAudio, playMusic, warmMusic } from './core/audio.js';
 import { loadAccess } from './core/util.js';
 import { MANIFEST, STORY, FOREGROUND, ENEMIES, ENDINGS } from './data/gamedata.js';
 import {
@@ -354,6 +354,10 @@ async function boot() {
 
   const veil = document.getElementById('loading');
 
+  // Six recordings, fetched while the title sits there. The context can exist
+  // before the first gesture -- only playback waits on it -- so decoding is
+  // done by the time anyone presses a key.
+  warmMusic();
   const unlock = () => { unlockAudio(); playMusic('town'); };
   addEventListener('pointerdown', unlock, { once: true });
   addEventListener('keydown', unlock, { once: true });

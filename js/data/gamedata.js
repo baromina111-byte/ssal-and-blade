@@ -484,30 +484,49 @@ export const ENEMIES = {
  * each fight has a rhythm of its own rather than a bigger health bar.
  */
 export const BOSS_MOVES = {
+  // `rage` is the second move, unlocked below half health. A boss with one
+  // move and a speed multiplier is a footsoldier with a bigger bar; the fight
+  // changes shape when the thing it does changes. The rage move is also
+  // telegraphed the instant the boss turns, so the phase change is something
+  // the player has to answer, not a number that ticked over.
   boss_blacktiger: {
     id: 'sweep', name: '회전 베기', tell: 1.0, reach: 190, dmg: 1.3, hits: 2,
     desc: '몸을 돌려 주위를 두 번 훑는다',
+    rage: { id: 'whirl', name: '광풍 회전', tell: 1.2, reach: 240, dmg: 1.05, hits: 4,
+      desc: '팽이처럼 돌며 네 번 — 물러서야 한다' },
   },
   boss_tiger: {
     id: 'pounce', name: '도약 급습', tell: 0.8, reach: 130, dmg: 1.6, leap: true,
     desc: '허공을 가르며 덮친다',
+    rage: { id: 'double', name: '연속 도약', tell: 0.7, reach: 140, dmg: 1.35, leap: true,
+      hops: 2, desc: '두 번 덮친다 — 첫 번을 피한 자리로' },
   },
   boss_warlord: {
     id: 'triple', name: '삼단 연격', tell: 0.9, reach: 150, dmg: 0.85, hits: 3,
     desc: '숨 쉴 틈 없이 세 번 벤다',
+    rage: { id: 'five', name: '오단 연격', tell: 0.8, reach: 160, dmg: 0.8, hits: 5,
+      desc: '다섯 번 — 막으면 기력이 바닥난다' },
   },
   boss_ming: {
     id: 'quake', name: '대지 강타', tell: 1.1, reach: 120, dmg: 1.5, shock: true,
     desc: '땅을 내리쳐 충격파를 보낸다',
+    rage: { id: 'tremor', name: '연속 지진', tell: 1.25, reach: 140, dmg: 1.2, shock: true,
+      hits: 3, desc: '세 번 내리친다 — 뛰어야 한다' },
   },
   boss_gunner: {
-    id: 'volley', name: '일제 방포', tell: 1.25, reach: 620, dmg: 1.2, hits: 3,
+    // `shot`: this is a matchlock. It fired with a sword-slash drawn over it
+    // and a melee reach test out to 620 -- a gun that cut. Now it shoots.
+    id: 'volley', name: '일제 방포', tell: 1.25, reach: 620, dmg: 1.2, hits: 3, shot: true,
     desc: '세 자루를 번갈아 쏜다 — 엄폐할 곳이 없다',
+    rage: { id: 'storm', name: '탄우', tell: 1.3, reach: 620, dmg: 1.0, hits: 5, shot: true,
+      desc: '다섯 발 — 줄을 바꿔 가며 피한다' },
   },
   boss_shinobi: {
     id: 'vanish', name: '그림자 가르기', tell: 0.7, reach: 140, dmg: 1.4, hits: 2,
     leap: true,
     desc: '사라졌다가 등 뒤에서 두 번 벤다',
+    rage: { id: 'shadows', name: '삼중 그림자', tell: 0.6, reach: 150, dmg: 1.15, hits: 3,
+      leap: true, hops: 3, desc: '세 번 사라지고 세 번 나타난다' },
   },
 };
 
